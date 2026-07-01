@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapMe - Online Viewer</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- Favicon Logo -->
+    <link rel="icon" type="image/png" href="mapme-logo.png">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- -------------------------------------------------- -->
+    <!-- Authentication Screen -->
+    <!-- -------------------------------------------------- -->
+    <div id="auth-screen" class="screen-container active">
+        <div class="auth-card glass-panel">
+            <div class="auth-header">
+                <div class="logo-badge">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="logo-icon"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                </div>
+                <h1>MapMe</h1>
+                <p>Sign in to view your walking routes online</p>
+            </div>
+            
+            <div class="auth-actions">
+                <button id="google-signin-btn" class="btn btn-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="google-icon"><path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.2-5.136 4.2a5.99 5.99 0 0 1-6-6a5.99 5.99 0 0 1 6-6c1.474 0 2.809.55 3.829 1.455l3.18-3.18C18.25 1.576 15.385 1 12.24 1A9.99 9.99 0 0 0 2.25 11a9.99 9.99 0 0 0 9.99 10c5.52 0 10.01-4.49 10.01-10c0-.685-.06-1.354-.18-2H12.24z"/></svg>
+                    Sign in with Google
+                </button>
+                
+                <div class="divider"><span>OR</span></div>
+                
+                <button id="guest-signin-btn" class="btn btn-secondary">
+                    Continue as Guest / Local Test
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- -------------------------------------------------- -->
+    <!-- Dashboard Screen -->
+    <!-- -------------------------------------------------- -->
+    <div id="dashboard-screen" class="screen-container">
+        <!-- Header -->
+        <header class="header glass-panel">
+            <div class="header-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="logo-icon-sm"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                <h2>MapMe</h2>
+            </div>
+            
+            <div class="user-profile">
+                <button id="map-theme-btn" class="btn-icon" title="Toggle Map Theme" style="margin-right: 8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="logout-icon" id="theme-icon-svg" style="width: 20px; height: 20px;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                </button>
+                <div id="user-info">
+                    <span id="user-name">Guest User</span>
+                    <span id="user-email">guest@mapme.local</span>
+                </div>
+                <img id="user-avatar" src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&h=100&q=80" alt="Avatar">
+                <button id="signout-btn" class="btn-icon btn-icon-danger" title="Sign Out">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="logout-icon"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats Overview -->
+        <section class="stats-row">
+            <div class="stat-card glass-panel border-cyan">
+                <div class="stat-icon-wrapper cyan">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="stat-icon"><polygon points="12 2 2 22 22 22 12 2"></polygon></svg>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">Total Walks</span>
+                    <h3 id="stat-walks">0</h3>
+                </div>
+            </div>
+            <div class="stat-card glass-panel border-violet">
+                <div class="stat-icon-wrapper violet">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="stat-icon"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">Total Distance</span>
+                    <h3 id="stat-distance">0 m</h3>
+                </div>
+            </div>
+            <div class="stat-card glass-panel border-emerald">
+                <div class="stat-icon-wrapper emerald">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="stat-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">Total Duration</span>
+                    <h3 id="stat-duration">0s</h3>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Body -->
+        <main class="dashboard-body">
+            <!-- Left Panel: Walks list -->
+            <aside class="sidebar glass-panel">
+                <div class="sidebar-header" style="display: flex; flex-direction: column; gap: 10px; align-items: flex-start;">
+                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                        <span style="font-size: 13.5px; font-weight: 600; color: var(--text-secondary);">Show All Walks</span>
+                        <label class="switch">
+                            <input type="checkbox" id="show-all-walks-cb" checked>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 4px;">
+                        <span style="font-size: 13.5px; font-weight: 600; color: #06b6d4;">Show Walks (&lt;7 km/h)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="show-walks-cb" checked>
+                            <span class="slider round" style="background-color: #06b6d433;"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 4px;">
+                        <span style="font-size: 13.5px; font-weight: 600; color: #ff3b30;">Show Drives (7+ km/h)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="show-drives-cb" checked>
+                            <span class="slider round" style="background-color: #ff3b3033;"></span>
+                        </label>
+                    </div>
+                </div>
+                <div id="walks-list" class="walks-list">
+                    <!-- Loaded dynamically -->
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-icon"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                        <p>No walks uploaded yet</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Panel: Map viewer -->
+            <section class="map-container glass-panel">
+                <div id="map"></div>
+                <!-- Mini Stats Overlay on Map -->
+                <div id="map-stats-card" class="map-stats-card glass-panel hidden">
+                    <h5 id="map-walk-title">Walk Details</h5>
+                    <div class="map-stats-grid">
+                        <div>
+                            <span class="label">DISTANCE</span>
+                            <span id="map-walk-distance" class="value">0 m</span>
+                        </div>
+                        <div>
+                            <span class="label">DURATION</span>
+                            <span id="map-walk-duration" class="value">0s</span>
+                        </div>
+                        <div>
+                            <span class="label">AVG SPEED</span>
+                            <span id="map-walk-speed" class="value">0 km/h</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <!-- Image Lightbox Modal -->
+    <div id="lightbox-modal" class="lightbox-modal">
+        <span class="lightbox-close">&times;</span>
+        <img class="lightbox-content" id="lightbox-img" alt="POI Fullscreen Preview">
+    </div>
+
+    <!-- Custom JS (Firebase & App logic) -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
