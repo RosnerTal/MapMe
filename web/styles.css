@@ -1019,3 +1019,19 @@ input:checked + .slider:before {
     color: var(--color-primary);
 }
 
+.timeframe-btn {
+    background: transparent;
+    color: var(--text-secondary);
+    transition: var(--transition-smooth);
+}
+
+.timeframe-btn.active {
+    background: var(--color-primary);
+    color: var(--color-bg) !important;
+}
+
+.timeframe-btn:not(.active):hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+

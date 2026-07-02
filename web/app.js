@@ -210,71 +210,107 @@ function loadWalks(uid) {
             return;
         }
         
-        let totalDist = 0;
-        let totalDur = 0;
-        let walks = [];
-        
+        let rawWalks = [];
         snapshot.forEach((doc) => {
             const data = doc.data();
-            walks.push({ id: doc.id, ...data });
-            totalDist += data.totalDistanceMeters || 0;
-            totalDur += data.totalDurationMillis || 0;
+            rawWalks.push({ id: doc.id, ...data });
         });
 
-        currentWalksData = walks;
+        currentWalksData = rawWalks;
         
-        // Render stats
-        statWalks.textContent = walks.length.toString();
-        statDistance.textContent = formatDistance(totalDist);
-        statDuration.textContent = formatDuration(totalDur);
-        
-        // Render walks list
-        walks.forEach((walk, index) => {
-            const card = document.createElement("div");
-            card.className = "walk-card";
-            card.dataset.id = walk.id;
-            card.style.animationDelay = `${index * 0.05}s`;
-            
-            const distanceText = formatDistance(walk.totalDistanceMeters);
-            const durationText = formatDuration(walk.totalDurationMillis);
-            
-            const startTimeDate = new Date(walk.startTime);
-            const formattedDate = startTimeDate.toLocaleDateString(undefined, {
-                month: 'short',
-                day: 'numeric'
+        // Define timeframe filter rendering function
+        window.filterTimeframe = function(timeframeType) {
+            const cutoffTime = getCutoffTime(timeframeType);
+            const filteredWalks = cutoffTime === 0 
+                ? currentWalksData 
+                : currentWalksData.filter(w => w.startTime >= cutoffTime);
+
+            // Re-render statistics
+            let totalDist = 0;
+            let totalDur = 0;
+            filteredWalks.forEach(w => {
+                totalDist += w.totalDistanceMeters || 0;
+                totalDur += w.totalDurationMillis || 0;
             });
-            const formattedTime = startTimeDate.toLocaleTimeString(undefined, {
-                hour: '2-digit',
-                minute: '2-digit'
+
+            statWalks.textContent = filteredWalks.length.toString();
+            statDistance.textContent = formatDistance(totalDist);
+            statDuration.textContent = formatDuration(totalDur);
+
+            // Re-render walks list elements
+            walksList.innerHTML = "";
+            if (filteredWalks.length === 0) {
+                walksList.innerHTML = `
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-icon"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                        <p>No walks in this timeframe</p>
+                    </div>`;
+                return;
+            }
+
+            filteredWalks.forEach((walk, index) => {
+                const card = document.createElement("div");
+                card.className = "walk-card";
+                card.dataset.id = walk.id;
+                card.style.animationDelay = `${index * 0.05}s`;
+                
+                const distanceText = formatDistance(walk.totalDistanceMeters);
+                const durationText = formatDuration(walk.totalDurationMillis);
+                
+                const startTimeDate = new Date(walk.startTime);
+                const formattedDate = startTimeDate.toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric'
+                });
+                const formattedTime = startTimeDate.toLocaleTimeString(undefined, {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                card.innerHTML = `
+                    <div class="walk-card-header">
+                        <div class="walk-title">${walk.title}</div>
+                        <span class="walk-date-badge">${formattedDate}</span>
+                    </div>
+                    <div class="walk-meta">
+                        <div class="meta-item">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="meta-icon"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                            <span>${distanceText}</span>
+                        </div>
+                        <div class="meta-item">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="meta-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                            <span>${durationText}</span>
+                        </div>
+                        <div class="meta-item" style="margin-left: auto; font-size: 11px; color: var(--text-muted);">
+                            <span>${formattedTime}</span>
+                        </div>
+                    </div>
+                `;
+                
+                card.addEventListener("click", () => selectWalk(walk, card));
+                walksList.appendChild(card);
             });
-            
-            card.innerHTML = `
-                <div class="walk-card-header">
-                    <div class="walk-title">${walk.title}</div>
-                    <span class="walk-date-badge">${formattedDate}</span>
-                </div>
-                <div class="walk-meta">
-                    <div class="meta-item">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="meta-icon"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                        <span>${distanceText}</span>
-                    </div>
-                    <div class="meta-item">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="meta-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                        <span>${durationText}</span>
-                    </div>
-                    <div class="meta-item" style="margin-left: auto; font-size: 11px; color: var(--text-muted);">
-                        <span>${formattedTime}</span>
-                    </div>
-                </div>
-            `;
-            
-            card.addEventListener("click", () => selectWalk(walk, card));
-            walksList.appendChild(card);
-        });
+        };
+
+        // Render initially with selected active timeframe button state (week)
+        const activeTimeframeBtn = document.querySelector(".timeframe-btn.active");
+        const activeType = activeTimeframeBtn ? activeTimeframeBtn.id.replace("timeframe-", "").replace("-btn", "") : "week";
+        window.filterTimeframe(activeType);
 
         // Trigger map drawing
         redrawAllMapLayers();
     });
+}
+
+// Utility timeframe math
+function getCutoffTime(type) {
+    const now = Date.now();
+    switch(type) {
+        case "week": return now - 7 * 24 * 60 * 60 * 1000;
+        case "month": return now - 30 * 24 * 60 * 60 * 1000;
+        case "three": return now - 90 * 24 * 60 * 60 * 1000;
+        case "lifetime": default: return 0;
+    }
 }
 
 // Select a walk card to draw route
@@ -564,6 +600,20 @@ if (mapThemeBtn) {
         }
     });
 }
+
+// Timeframe Selector Buttons Listener
+const timeframeBtns = document.querySelectorAll(".timeframe-btn");
+timeframeBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+        timeframeBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        
+        const type = btn.id.replace("timeframe-", "").replace("-btn", "");
+        if (typeof window.filterTimeframe === "function") {
+            window.filterTimeframe(type);
+        }
+    });
+});
 
 // Show all walks checkbox listener
 const showAllWalksCb = document.getElementById("show-all-walks-cb");

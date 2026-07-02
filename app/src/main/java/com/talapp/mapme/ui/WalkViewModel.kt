@@ -89,19 +89,39 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    enum class Timeframe { WEEK, MONTH, THREE_MONTHS, LIFETIME }
+
+    private val _selectedTimeframe = MutableStateFlow(Timeframe.WEEK)
+    val selectedTimeframe = _selectedTimeframe.asStateFlow()
+
+    fun setTimeframe(timeframe: Timeframe) {
+        _selectedTimeframe.value = timeframe
+    }
+
     // List of all completed walks
     val allWalks: StateFlow<List<Walk>> = repository.allWalks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Lifetime statistics
-    val totalWalks: StateFlow<Int> = allWalks.map { it.size }
+    // Filtered walks based on the selected timeframe
+    val filteredWalks: StateFlow<List<Walk>> = combine(allWalks, _selectedTimeframe) { walks, timeframe ->
+        val cutoffTime = when (timeframe) {
+            Timeframe.WEEK -> System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+            Timeframe.MONTH -> System.currentTimeMillis() - 30 * 24 * 60 * 60 * 1000L
+            Timeframe.THREE_MONTHS -> System.currentTimeMillis() - 90 * 24 * 60 * 60 * 1000L
+            Timeframe.LIFETIME -> 0L
+        }
+        if (cutoffTime == 0L) walks else walks.filter { it.startTime >= cutoffTime }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Statistics based on selected timeframe
+    val totalWalks: StateFlow<Int> = filteredWalks.map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val totalDistanceMeters: StateFlow<Double> = allWalks.map { list ->
+    val totalDistanceMeters: StateFlow<Double> = filteredWalks.map { list ->
         list.sumOf { it.totalDistanceMeters }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
-    val totalDurationMillis: StateFlow<Long> = allWalks.map { list ->
+    val totalDurationMillis: StateFlow<Long> = filteredWalks.map { list ->
         list.sumOf { it.totalDurationMillis }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 

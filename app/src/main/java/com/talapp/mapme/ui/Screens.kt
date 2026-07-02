@@ -133,6 +133,7 @@ fun OsmMapView(
 ) {
     val context = LocalContext.current
     val gson = remember { Gson() }
+    var hasSetInitialTrackingZoom by remember { mutableStateOf(false) }
     
     // Remember the MapView across recompositions
     val mapView = remember {
@@ -364,10 +365,38 @@ fun OsmMapView(
         }
 
         // 3. Dynamic camera centering and zooming
+        if (currentLocation == null) {
+            hasSetInitialTrackingZoom = false
+        }
+
         if (currentLocation != null) {
-            // Tracking mode: Animate camera to follow current location
             val latestPoint = GeoPoint(currentLocation.latitude, currentLocation.longitude)
-            mapView.controller.animateTo(latestPoint)
+            
+            if (!hasSetInitialTrackingZoom) {
+                // Initial tracking lock: zoom to show 300 meters radius around the user location
+                // Earth radius is ~6371000m. 1 degree of latitude is ~111111m.
+                // 300m is roughly 0.0027 degrees of latitude and longitude (at average latitudes)
+                val latDelta = 0.0027
+                val lonDelta = 0.0027
+                val north = currentLocation.latitude + latDelta
+                val south = currentLocation.latitude - latDelta
+                val east = currentLocation.longitude + lonDelta
+                val west = currentLocation.longitude - lonDelta
+                
+                mapView.post {
+                    try {
+                        val bbox = BoundingBox(north, east, south, west)
+                        mapView.zoomToBoundingBox(bbox, true, 0)
+                        mapView.controller.setCenter(latestPoint)
+                    } catch (e: Exception) {
+                        mapView.controller.setCenter(latestPoint)
+                    }
+                }
+                hasSetInitialTrackingZoom = true
+            } else {
+                // Tracking mode (user has already locked zoom): follow current location without changing zoom level
+                mapView.controller.animateTo(latestPoint)
+            }
         } else if (allPointsForCentering.size >= 2) {
             // Historical view: Fit path inside map screen bounds
             mapView.post {
@@ -596,16 +625,57 @@ fun DashboardScreen(
                 }
             }
 
+            val timeframe by viewModel.selectedTimeframe.collectAsState()
+            val filteredWalks by viewModel.filteredWalks.collectAsState()
+
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Lifetime Stats Container
+            // Timeframe Selector Pills
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Slate800.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val timeframeOptions = listOf(
+                    WalkViewModel.Timeframe.WEEK to "1 Week",
+                    WalkViewModel.Timeframe.MONTH to "1 Month",
+                    WalkViewModel.Timeframe.THREE_MONTHS to "3 Months",
+                    WalkViewModel.Timeframe.LIFETIME to "Lifetime"
+                )
+
+                timeframeOptions.forEach { (option, label) ->
+                    val isSelected = timeframe == option
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) NeonCyan else Color.Transparent)
+                            .clickable { viewModel.setTimeframe(option) }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSelected) Color.Black else TextGray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Stats Container
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    title = "Total Walks",
+                    title = "Walks Count",
                     value = totalWalksCount.toString(),
                     icon = Icons.Default.DirectionsWalk,
                     color = NeonCyan
@@ -627,7 +697,7 @@ fun DashboardScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            WeeklyActivityChart(walks = walks)
+            WeeklyActivityChart(walks = filteredWalks)
 
             Spacer(modifier = Modifier.height(16.dp))
 
