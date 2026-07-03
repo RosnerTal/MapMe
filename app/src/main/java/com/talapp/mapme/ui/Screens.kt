@@ -145,6 +145,43 @@ fun OsmMapView(
         }
     }
 
+    // Recenter mode: true = follow user current location, false = user manually scrolled/zoomed
+    var autoRecenterEnabled by remember { mutableStateOf(true) }
+    var lastUserInteractionTime by remember { mutableStateOf(0L) }
+
+    // Touch listener wrapper to catch when user drags/scrolls/touches the map
+    LaunchedEffect(mapView) {
+        val listener = object : org.osmdroid.events.MapListener {
+            override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                if (System.currentTimeMillis() - lastUserInteractionTime > 300) {
+                    autoRecenterEnabled = false
+                }
+                lastUserInteractionTime = System.currentTimeMillis()
+                return true
+            }
+            override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                if (System.currentTimeMillis() - lastUserInteractionTime > 300) {
+                    autoRecenterEnabled = false
+                }
+                lastUserInteractionTime = System.currentTimeMillis()
+                return true
+            }
+        }
+        mapView.addMapListener(listener)
+    }
+
+    // Auto-recenter timer: check every second if 5 seconds have passed since the last interaction
+    LaunchedEffect(currentLocation) {
+        while (true) {
+            kotlinx.coroutines.delay(1000L)
+            if (!autoRecenterEnabled && lastUserInteractionTime > 0L) {
+                if (System.currentTimeMillis() - lastUserInteractionTime >= 5000L) {
+                    autoRecenterEnabled = true
+                }
+            }
+        }
+    }
+
     // Toggle map tiles when isDarkMap changes
     LaunchedEffect(isDarkMap) {
         val tileSource = org.osmdroid.tileprovider.tilesource.XYTileSource(
@@ -225,8 +262,16 @@ fun OsmMapView(
                 val pt1 = walkPoints[i]
                 val pt2 = walkPoints[i + 1]
                 
-                // Speed threshold check (average speed or point speed)
-                val isDriving = pt2.speed * 3.6f >= 7.0f || pt1.speed * 3.6f >= 7.0f
+                // Smart speed threshold: Compute the average speed of the local window
+                // (current point, next point, plus surrounding points if available)
+                val pointsWindow = mutableListOf<WalkPoint>()
+                if (i > 0) pointsWindow.add(walkPoints[i - 1])
+                pointsWindow.add(pt1)
+                pointsWindow.add(pt2)
+                if (i < walkPoints.size - 2) pointsWindow.add(walkPoints[i + 2])
+                
+                val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
+                val isDriving = avgSpeedKmh >= 7.0f
                 
                 // Skip rendering if filtered out
                 if (isDriving && !showDrives) {
@@ -306,7 +351,15 @@ fun OsmMapView(
                 val pt1 = points[i]
                 val pt2 = points[i + 1]
                 
-                val isDriving = pt2.speed * 3.6f >= 7.0f || pt1.speed * 3.6f >= 7.0f
+                // Smart speed threshold: Compute the average speed of the local window
+                val pointsWindow = mutableListOf<WalkPoint>()
+                if (i > 0) pointsWindow.add(points[i - 1])
+                pointsWindow.add(pt1)
+                pointsWindow.add(pt2)
+                if (i < points.size - 2) pointsWindow.add(points[i + 2])
+                
+                val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
+                val isDriving = avgSpeedKmh >= 7.0f
                 
                 // Skip rendering if filtered out
                 if (isDriving && !showDrives) {
@@ -372,30 +425,32 @@ fun OsmMapView(
         if (currentLocation != null) {
             val latestPoint = GeoPoint(currentLocation.latitude, currentLocation.longitude)
             
-            if (!hasSetInitialTrackingZoom) {
-                // Initial tracking lock: zoom to show 300 meters radius around the user location
-                // Earth radius is ~6371000m. 1 degree of latitude is ~111111m.
-                // 300m is roughly 0.0027 degrees of latitude and longitude (at average latitudes)
-                val latDelta = 0.0027
-                val lonDelta = 0.0027
-                val north = currentLocation.latitude + latDelta
-                val south = currentLocation.latitude - latDelta
-                val east = currentLocation.longitude + lonDelta
-                val west = currentLocation.longitude - lonDelta
-                
-                mapView.post {
-                    try {
-                        val bbox = BoundingBox(north, east, south, west)
-                        mapView.zoomToBoundingBox(bbox, true, 0)
-                        mapView.controller.setCenter(latestPoint)
-                    } catch (e: Exception) {
-                        mapView.controller.setCenter(latestPoint)
+            if (autoRecenterEnabled) {
+                if (!hasSetInitialTrackingZoom) {
+                    // Initial tracking lock: zoom to show 300 meters radius around the user location
+                    // Earth radius is ~6371000m. 1 degree of latitude is ~111111m.
+                    // 300m is roughly 0.0027 degrees of latitude and longitude (at average latitudes)
+                    val latDelta = 0.0027
+                    val lonDelta = 0.0027
+                    val north = currentLocation.latitude + latDelta
+                    val south = currentLocation.latitude - latDelta
+                    val east = currentLocation.longitude + lonDelta
+                    val west = currentLocation.longitude - lonDelta
+                    
+                    mapView.post {
+                        try {
+                            val bbox = BoundingBox(north, east, south, west)
+                            mapView.zoomToBoundingBox(bbox, true, 0)
+                            mapView.controller.setCenter(latestPoint)
+                        } catch (e: Exception) {
+                            mapView.controller.setCenter(latestPoint)
+                        }
                     }
+                    hasSetInitialTrackingZoom = true
+                } else {
+                    // Tracking mode (user has already locked zoom): follow current location without changing zoom level
+                    mapView.controller.animateTo(latestPoint)
                 }
-                hasSetInitialTrackingZoom = true
-            } else {
-                // Tracking mode (user has already locked zoom): follow current location without changing zoom level
-                mapView.controller.animateTo(latestPoint)
             }
         } else if (allPointsForCentering.size >= 2) {
             // Historical view: Fit path inside map screen bounds
@@ -437,10 +492,38 @@ fun OsmMapView(
         mapView.invalidate() // Trigger redraw
     }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { mapView }
-    )
+    Box(modifier = modifier) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { mapView }
+        )
+
+        // Floating Recenter button (visible if user has panned away during active tracking)
+        if (currentLocation != null && !autoRecenterEnabled) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 16.dp, end = 16.dp)
+                    .size(50.dp)
+                    .clip(CircleShape)
+                    .background(GlassBackground)
+                    .border(1.dp, GlassBorder, CircleShape)
+                    .clickable {
+                        autoRecenterEnabled = true
+                        val latestPoint = GeoPoint(currentLocation.latitude, currentLocation.longitude)
+                        mapView.controller.animateTo(latestPoint)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MyLocation,
+                    contentDescription = "Recenter Map",
+                    tint = NeonCyan,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    }
 }
 
 // ----------------------------------------------------
@@ -459,6 +542,8 @@ fun DashboardScreen(
     val totalDistance by viewModel.totalDistanceMeters.collectAsState()
     val totalDuration by viewModel.totalDurationMillis.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
+    val timeframe by viewModel.selectedTimeframe.collectAsState()
+    val filteredWalks by viewModel.filteredWalks.collectAsState()
 
     Box(
         modifier = Modifier
@@ -488,277 +573,271 @@ fun DashboardScreen(
                     )
                 )
         )
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(top = 48.dp, bottom = 100.dp)
         ) {
             // Elegant Header
-            Spacer(modifier = Modifier.height(48.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        text = "MapMe",
-                        color = Color.White,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Color every street in your city",
-                        color = TextGray,
-                        fontSize = 14.sp
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(Slate800)
-                        .border(1.dp, GlassBorder, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = "Profile",
-                        tint = NeonCyan
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Cloud Sync Panel
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Slate800),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(
-                    1.5.dp,
-                    Brush.linearGradient(listOf(NeonCyan.copy(alpha = 0.35f), ElectricViolet.copy(alpha = 0.35f)))
-                )
-            ) {
+            item {
                 Row(
-                    modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    if (currentUser == null) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(
-                                text = "Cloud Sync Viewer",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Sign in to view walks online",
-                                color = TextGray,
-                                fontSize = 11.sp
-                            )
-                        }
-                        
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = onGoogleSignInClick,
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("Google", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            
-                            Button(
-                                onClick = { viewModel.signInAnonymously() },
-                                colors = ButtonDefaults.buttonColors(containerColor = ElectricViolet),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("Guest", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    } else {
-                        val isGuest = currentUser?.isAnonymous == true
-                        val displayName = if (isGuest) "Guest Explorer" else (currentUser?.displayName ?: "User")
-                        
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Synced as $displayName",
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = if (isGuest) "Temporary Guest Profile" else "Google Cloud Account Active",
-                                color = if (isGuest) ElectricViolet else NeonCyan,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { viewModel.syncWalks() }) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Sync Now",
-                                    tint = NeonCyan,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            IconButton(onClick = { viewModel.signOut() }) {
-                                Icon(
-                                    imageVector = Icons.Default.ExitToApp,
-                                    contentDescription = "Sign Out",
-                                    tint = Color(0xFFEF4444),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            val timeframe by viewModel.selectedTimeframe.collectAsState()
-            val filteredWalks by viewModel.filteredWalks.collectAsState()
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Timeframe Selector Pills
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Slate800.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                val timeframeOptions = listOf(
-                    WalkViewModel.Timeframe.WEEK to "1 Week",
-                    WalkViewModel.Timeframe.MONTH to "1 Month",
-                    WalkViewModel.Timeframe.THREE_MONTHS to "3 Months",
-                    WalkViewModel.Timeframe.LIFETIME to "Lifetime"
-                )
-
-                timeframeOptions.forEach { (option, label) ->
-                    val isSelected = timeframe == option
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSelected) NeonCyan else Color.Transparent)
-                            .clickable { viewModel.setTimeframe(option) }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Column {
                         Text(
-                            text = label,
-                            color = if (isSelected) Color.Black else TextGray,
-                            fontSize = 12.sp,
+                            text = "MapMe",
+                            color = Color.White,
+                            fontSize = 28.sp,
                             fontWeight = FontWeight.Bold
                         )
+                        Text(
+                            text = "Color every street in your city",
+                            color = TextGray,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Slate800)
+                            .border(1.dp, GlassBorder, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Profile",
+                            tint = NeonCyan
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // Cloud Sync Panel
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Slate800),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.5.dp,
+                        Brush.linearGradient(listOf(NeonCyan.copy(alpha = 0.35f), ElectricViolet.copy(alpha = 0.35f)))
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        if (currentUser == null) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "Cloud Sync Viewer",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Sign in to view walks online",
+                                    color = TextGray,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = onGoogleSignInClick,
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Google", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                
+                                Button(
+                                    onClick = { viewModel.signInAnonymously() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = ElectricViolet),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Guest", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } else {
+                            val isGuest = currentUser?.isAnonymous == true
+                            val displayName = if (isGuest) "Guest Explorer" else (currentUser?.displayName ?: "User")
+                            
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Synced as $displayName",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (isGuest) "Temporary Guest Profile" else "Google Cloud Account Active",
+                                    color = if (isGuest) ElectricViolet else NeonCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { viewModel.syncWalks() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Sync Now",
+                                        tint = NeonCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.signOut() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.ExitToApp,
+                                        contentDescription = "Sign Out",
+                                        tint = Color(0xFFEF4444),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Timeframe Selector Pills
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Slate800.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val timeframeOptions = listOf(
+                        WalkViewModel.Timeframe.WEEK to "1 Week",
+                        WalkViewModel.Timeframe.MONTH to "1 Month",
+                        WalkViewModel.Timeframe.THREE_MONTHS to "3 Months",
+                        WalkViewModel.Timeframe.LIFETIME to "Lifetime"
+                    )
+
+                    timeframeOptions.forEach { (option, label) ->
+                        val isSelected = timeframe == option
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) NeonCyan else Color.Transparent)
+                                .clickable { viewModel.setTimeframe(option) }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.Black else TextGray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
 
             // Stats Container
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    title = "Walks Count",
-                    value = totalWalksCount.toString(),
-                    icon = Icons.Default.DirectionsWalk,
-                    color = NeonCyan
-                )
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    title = "Distance",
-                    value = formatDistance(totalDistance),
-                    icon = Icons.Default.LocationOn,
-                    color = ElectricViolet
-                )
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    title = "Time",
-                    value = formatTime(totalDuration),
-                    icon = Icons.Default.Timer,
-                    color = EmeraldGreen
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Walks Count",
+                        value = totalWalksCount.toString(),
+                        icon = Icons.Default.DirectionsWalk,
+                        color = NeonCyan
+                    )
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Distance",
+                        value = formatDistance(totalDistance),
+                        icon = Icons.Default.LocationOn,
+                        color = ElectricViolet
+                    )
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Time",
+                        value = formatTime(totalDuration),
+                        icon = Icons.Default.Timer,
+                        color = EmeraldGreen
+                    )
+                }
+            }
+
+            item {
+                WeeklyActivityChart(walks = filteredWalks)
+            }
+
+            // Walks History list header
+            item {
+                Text(
+                    text = "Walk History",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 8.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-            WeeklyActivityChart(walks = filteredWalks)
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Walks History list header
-            Text(
-                text = "Walk History",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            // Empty state or History list
+            // Empty state or History list items
             if (walks.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(32.dp)
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Map,
-                            contentDescription = "Map Placeholder",
-                            tint = Slate600,
-                            modifier = Modifier.size(72.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No walks recorded yet",
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Tap the start button below to record your first walking exploration!",
-                            color = TextGray,
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "Map Placeholder",
+                                tint = Slate600,
+                                modifier = Modifier.size(72.dp)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "No walks recorded yet",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Tap the start button below to record your first walking exploration!",
+                                color = TextGray,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 100.dp)
-                ) {
-                    items(walks, key = { it.id }) { walk ->
-                        WalkHistoryItem(
-                            walk = walk,
-                            onClick = { onWalkClick(walk.id) },
-                            onDelete = { viewModel.deleteWalk(walk.id) }
-                        )
-                    }
+                items(walks, key = { it.id }) { walk ->
+                    WalkHistoryItem(
+                        walk = walk,
+                        onClick = { onWalkClick(walk.id) },
+                        onDelete = { viewModel.deleteWalk(walk.id) }
+                    )
                 }
             }
         }

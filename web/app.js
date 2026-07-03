@@ -361,8 +361,15 @@ function drawWalkRoute(walk, fitBounds = false) {
         const pt1 = points[i];
         const pt2 = points[i + 1];
         
-        // Speed check (using either point speed)
-        const isDriving = (pt2.speed * 3.6 >= 7.0) || (pt1.speed * 3.6 >= 7.0);
+        // Smart speed threshold: Compute the average speed of the local window
+        const pointsWindow = [];
+        if (i > 0) pointsWindow.push(points[i - 1]);
+        pointsWindow.push(pt1);
+        pointsWindow.push(pt2);
+        if (i < points.length - 2) pointsWindow.push(points[i + 2]);
+        
+        const avgSpeedKmh = (pointsWindow.reduce((sum, p) => sum + p.speed, 0) / pointsWindow.length) * 3.6;
+        const isDriving = avgSpeedKmh >= 7.0;
         
         // Skip rendering if filtered out
         if (isDriving && !showDrives) continue;
@@ -485,7 +492,15 @@ function redrawAllMapLayers(fitActiveWalk = false) {
                 const pt1 = pts[i];
                 const pt2 = pts[i + 1];
                 
-                const isDriving = (pt2.speed * 3.6 >= 7.0) || (pt1.speed * 3.6 >= 7.0);
+                // Smart speed threshold: Compute the average speed of the local window
+                const pointsWindow = [];
+                if (i > 0) pointsWindow.push(pts[i - 1]);
+                pointsWindow.push(pt1);
+                pointsWindow.push(pt2);
+                if (i < pts.length - 2) pointsWindow.push(pts[i + 2]);
+                
+                const avgSpeedKmh = (pointsWindow.reduce((sum, p) => sum + p.speed, 0) / pointsWindow.length) * 3.6;
+                const isDriving = avgSpeedKmh >= 7.0;
                 
                 // Skip rendering if filtered out
                 if (isDriving && !showDrives) continue;
