@@ -67,6 +67,7 @@ let isDarkMap = true;
 let showAllWalks = true;
 let showWalks = true;
 let showDrives = true;
+let showPois = true;
 let currentWalksData = []; // Store loaded walks
 let pastWalkLayers = []; // Keep track of all drawn layers for past walks
 let activePoiLayers = []; // Active POI layers
@@ -130,6 +131,16 @@ function formatDuration(millis) {
 function formatSpeed(metersPerSec) {
     const kmh = metersPerSec * 3.6;
     return `${kmh.toFixed(1)} km/h`;
+}
+
+function getSegmentKey(lat1, lon1, lat2, lon2) {
+    const rLat1 = lat1.toFixed(5);
+    const rLon1 = lon1.toFixed(5);
+    const rLat2 = lat2.toFixed(5);
+    const rLon2 = lon2.toFixed(5);
+    return (rLat1 + rLon1 < rLat2 + rLon2) 
+        ? `${rLat1},${rLon1}_${rLat2},${rLon2}`
+        : `${rLat2},${rLon2}_${rLat1},${rLon1}`;
 }
 
 // ----------------------------------------------------
@@ -249,6 +260,24 @@ function loadWalks(uid) {
             }
 
             filteredWalks.forEach((walk, index) => {
+                let points = [];
+                try {
+                    points = JSON.parse(walk.pointsJson);
+                } catch(e) {}
+                
+                // Classify as drive if > 50% of the speeds are >= 7 km/h (1.944 m/s)
+                let driveCount = 0;
+                points.forEach(pt => {
+                    if (pt.speed * 3.6 >= 7.0) driveCount++;
+                });
+                const isDrive = points.length > 0 && (driveCount / points.length) > 0.5;
+                
+                let displayTitle = walk.title;
+                if (walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at")) {
+                    const timeLabel = walk.title.substring(walk.title.indexOf("at "));
+                    displayTitle = isDrive ? `Drive ${timeLabel}` : `Walk ${timeLabel}`;
+                }
+
                 const card = document.createElement("div");
                 card.className = "walk-card";
                 card.dataset.id = walk.id;
@@ -266,10 +295,18 @@ function loadWalks(uid) {
                     hour: '2-digit',
                     minute: '2-digit'
                 });
+
+                // Set different icons depending on mode
+                const modeIcon = isDrive 
+                    ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="var(--drive-accent, #ff3b30)" stroke-width="2" class="meta-icon" style="width:16px; height:16px;"><rect x="1" y="3" width="22" height="13" rx="2" ry="2"></rect><path d="M5 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm14 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"></path></svg>`
+                    : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="var(--neon-cyan)" stroke-width="2" class="meta-icon" style="width:16px; height:16px;"><path d="M18 19v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`;
                 
                 card.innerHTML = `
                     <div class="walk-card-header">
-                        <div class="walk-title">${walk.title}</div>
+                        <div class="walk-title" style="display: flex; align-items: center; gap: 6px;">
+                            ${modeIcon}
+                            <span>${displayTitle}</span>
+                        </div>
                         <span class="walk-date-badge">${formattedDate}</span>
                     </div>
                     <div class="walk-meta">
@@ -417,29 +454,31 @@ function drawWalkRoute(walk, fitBounds = false) {
         }
     }
     
-    pois.forEach(poi => {
-        const poiDot = L.divIcon({ className: 'map-poi-dot active-poi-dot' });
-        
-        let popupContent = `<div class="poi-popup">`;
-        popupContent += `<h4>Point of Interest</h4>`;
-        
-        const dateStr = new Date(poi.timestamp).toLocaleDateString() + ' ' + new Date(poi.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        popupContent += `<span class="poi-time">${dateStr}</span>`;
-        
-        if (poi.text) {
-            popupContent += `<p class="poi-desc">${poi.text}</p>`;
-        }
-        if (poi.imageBase64) {
-            popupContent += `<img src="data:image/jpeg;base64,${poi.imageBase64}" class="poi-img" />`;
-        }
-        popupContent += `</div>`;
-        
-        const m = L.marker([poi.latitude, poi.longitude], { icon: poiDot })
-            .addTo(map)
-            .bindPopup(popupContent, { maxWidth: 240, className: 'custom-leaflet-popup' });
+    if (showPois) {
+        pois.forEach(poi => {
+            const poiDot = L.divIcon({ className: 'map-poi-dot active-poi-dot' });
             
-        activePoiLayers.push(m);
-    });
+            let popupContent = `<div class="poi-popup">`;
+            popupContent += `<h4>Point of Interest</h4>`;
+            
+            const dateStr = new Date(poi.timestamp).toLocaleDateString() + ' ' + new Date(poi.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            popupContent += `<span class="poi-time">${dateStr}</span>`;
+            
+            if (poi.text) {
+                popupContent += `<p class="poi-desc">${poi.text}</p>`;
+            }
+            if (poi.imageBase64) {
+                popupContent += `<img src="data:image/jpeg;base64,${poi.imageBase64}" class="poi-img" />`;
+            }
+            popupContent += `</div>`;
+            
+            const m = L.marker([poi.latitude, poi.longitude], { icon: poiDot })
+                .addTo(map)
+                .bindPopup(popupContent, { maxWidth: 240, className: 'custom-leaflet-popup' });
+                
+            activePoiLayers.push(m);
+        });
+    }
     
     // 5. Fit bounds to fit the route on screen
     if (fitBounds && activeRouteLayers.length > 0) {
@@ -473,8 +512,12 @@ function redrawAllMapLayers(fitActiveWalk = false) {
 
     const allLatLns = [];
 
-    // 2. If showAllWalks is checked, draw all routes segmented by speed
+    // 2. If showAllWalks is checked, draw all routes segmented by speed with thickness/opacity matching density
     if (showAllWalks) {
+        // Pre-parse past walks and compute coordinates overlaps
+        const parsedWalks = [];
+        const segmentCountMap = {};
+
         currentWalksData.forEach(walk => {
             let pts = [];
             try {
@@ -483,7 +526,18 @@ function redrawAllMapLayers(fitActiveWalk = false) {
                 return;
             }
             if (pts.length === 0) return;
-            
+            parsedWalks.push({ walk, pts });
+
+            // Count traversal frequency
+            for (let i = 0; i < pts.length - 1; i++) {
+                const pt1 = pts[i];
+                const pt2 = pts[i + 1];
+                const key = getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude);
+                segmentCountMap[key] = (segmentCountMap[key] || 0) + 1;
+            }
+        });
+
+        parsedWalks.forEach(({ walk, pts }) => {
             // Speed coloring constants for past walks
             const basePastColor = "#8b5cf6"; // Electric Violet
             const driveColor = "#ee5859"; // Light red/coral
@@ -511,10 +565,19 @@ function redrawAllMapLayers(fitActiveWalk = false) {
                 
                 const finalColor = isDriving ? driveColor : basePastColor;
                 
+                // Dynamic styling based on traversal density
+                const key = getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude);
+                const traversalCount = segmentCountMap[key] || 1;
+                
+                // opacity scale from 0.45 up to 0.90
+                const dynamicOpacity = Math.min(0.45 + (traversalCount - 1) * 0.15, 0.90);
+                // weight scale from 4.5 up to 9.0
+                const dynamicWeight = Math.min(4.5 + (traversalCount - 1) * 1.0, 9.0);
+
                 const pastLine = L.polyline(segmentLatLngs, {
                     color: finalColor,
-                    opacity: 0.45,
-                    weight: 4.5,
+                    opacity: dynamicOpacity,
+                    weight: dynamicWeight,
                     lineCap: 'round',
                     lineJoin: 'round'
                 }).addTo(map);
@@ -530,34 +593,35 @@ function redrawAllMapLayers(fitActiveWalk = false) {
                 pastWalkLayers.push(pastLine);
             }
 
-            // Draw past walk POIs
-            let pois = [];
-            if (walk.poisJson) {
-                try {
-                    pois = JSON.parse(walk.poisJson);
-                } catch(e) {}
-            }
-            pois.forEach(poi => {
-                const poiDot = L.divIcon({ className: 'map-poi-dot past-poi-dot' });
-                
-                let popupContent = `<div class="poi-popup">`;
-                popupContent += `<h4>Point of Interest</h4>`;
-                const dateStr = new Date(poi.timestamp).toLocaleDateString() + ' ' + new Date(poi.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                popupContent += `<span class="poi-time">${dateStr}</span>`;
-                if (poi.text) {
-                    popupContent += `<p class="poi-desc">${poi.text}</p>`;
+            if (showPois) {
+                let pois = [];
+                if (walk.poisJson) {
+                    try {
+                        pois = JSON.parse(walk.poisJson);
+                    } catch(e) {}
                 }
-                if (poi.imageBase64) {
-                    popupContent += `<img src="data:image/jpeg;base64,${poi.imageBase64}" class="poi-img" />`;
-                }
-                popupContent += `</div>`;
-                
-                const m = L.marker([poi.latitude, poi.longitude], { icon: poiDot })
-                    .addTo(map)
-                    .bindPopup(popupContent, { maxWidth: 240, className: 'custom-leaflet-popup' });
+                pois.forEach(poi => {
+                    const poiDot = L.divIcon({ className: 'map-poi-dot past-poi-dot' });
                     
-                pastPoiLayers.push(m);
-            });
+                    let popupContent = `<div class="poi-popup">`;
+                    popupContent += `<h4>Point of Interest</h4>`;
+                    const dateStr = new Date(poi.timestamp).toLocaleDateString() + ' ' + new Date(poi.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                    popupContent += `<span class="poi-time">${dateStr}</span>`;
+                    if (poi.text) {
+                        popupContent += `<p class="poi-desc">${poi.text}</p>`;
+                    }
+                    if (poi.imageBase64) {
+                        popupContent += `<img src="data:image/jpeg;base64,${poi.imageBase64}" class="poi-img" />`;
+                    }
+                    popupContent += `</div>`;
+                    
+                    const m = L.marker([poi.latitude, poi.longitude], { icon: poiDot })
+                        .addTo(map)
+                        .bindPopup(popupContent, { maxWidth: 240, className: 'custom-leaflet-popup' });
+                        
+                    pastPoiLayers.push(m);
+                });
+            }
         });
     }
 
@@ -653,6 +717,15 @@ const showDrivesCb = document.getElementById("show-drives-cb");
 if (showDrivesCb) {
     showDrivesCb.addEventListener("change", (e) => {
         showDrives = e.target.checked;
+        redrawAllMapLayers();
+    });
+}
+
+// Show POIs filter checkbox listener
+const showPoisCb = document.getElementById("show-pois-cb");
+if (showPoisCb) {
+    showPoisCb.addEventListener("change", (e) => {
+        showPois = e.target.checked;
         redrawAllMapLayers();
     });
 }

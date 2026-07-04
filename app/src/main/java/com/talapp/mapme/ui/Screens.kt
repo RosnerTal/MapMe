@@ -113,6 +113,18 @@ fun uriToBase64(context: Context, uri: Uri): String? {
     }
 }
 
+fun getSegmentKey(lat1: Double, lon1: Double, lat2: Double, lon2: Double): String {
+    val rLat1 = String.format("%.5f", lat1)
+    val rLon1 = String.format("%.5f", lon1)
+    val rLat2 = String.format("%.5f", lat2)
+    val rLon2 = String.format("%.5f", lon2)
+    return if (rLat1 + rLon1 < rLat2 + rLon2) {
+        "${rLat1},${rLon1}_${rLat2},${rLon2}"
+    } else {
+        "${rLat2},${rLon2}_${rLat1},${rLon1}"
+    }
+}
+
 // ----------------------------------------------------
 // Reusable OsmMapView Component
 // ----------------------------------------------------
@@ -128,6 +140,7 @@ fun OsmMapView(
     isDarkMap: Boolean = true,
     showWalks: Boolean = true,
     showDrives: Boolean = true,
+    showPois: Boolean = true,
     activePois: List<WalkPoi> = emptyList(),
     onPoiClick: ((WalkPoi) -> Unit)? = null
 ) {
@@ -211,19 +224,34 @@ fun OsmMapView(
     }
 
     // Redraw paths and markers when data changes
-    LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives) {
+    LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives, showPois) {
         mapView.overlays.clear()
 
-        // 1. Draw past walks in semi-transparent Electric Violet (or vibrant Green if selected)
-        val allPointsForCentering = mutableListOf<GeoPoint>()
-        
-        for (walk in pastWalks) {
+        // 1. Pre-calculate overlaps for past walk segments to render repeated paths darker/bolder
+        // A segment is defined by rounding lat/long to 5 decimal places (~1.1 meter resolution) to group matches
+        val segmentCountMap = mutableMapOf<String, Int>()
+        val parsedPastWalks = pastWalks.map { walk ->
             val walkPoints = try {
                 val listType = object : TypeToken<List<WalkPoint>>() {}.type
-                gson.fromJson<List<WalkPoint>>(walk.pointsJson, listType)
+                gson.fromJson<List<WalkPoint>>(walk.pointsJson, listType) ?: emptyList()
             } catch (e: Exception) {
                 emptyList()
             }
+            walk to walkPoints
+        }
+
+        // Count traversal frequencies of segments
+        for ((_, walkPoints) in parsedPastWalks) {
+            for (i in 0 until walkPoints.size - 1) {
+                val pt1 = walkPoints[i]
+                val pt2 = walkPoints[i + 1]
+                val key = getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude)
+                segmentCountMap[key] = (segmentCountMap[key] ?: 0) + 1
+            }
+        }
+
+        val allPointsForCentering = mutableListOf<GeoPoint>()
+        for ((walk, walkPoints) in parsedPastWalks) {
             if (walkPoints.isEmpty()) continue
             
             // Check radius filter if active
@@ -285,22 +313,28 @@ fun OsmMapView(
 
                 val segmentGeo = listOf(GeoPoint(pt1.latitude, pt1.longitude), GeoPoint(pt2.latitude, pt2.longitude))
                 val finalColorStr = if (isDriving) driveColor else baseWalkColor
-                val hexColor = if (!isSelected) {
-                    // Prepend 80 (50% opacity) to color code. Color code is "#AARRGGBB" or "#RRGGBB".
-                    // If color code is already 8 hex digits after '#', strip AA and replace with 80.
-                    // If it is 6 hex digits after '#', prepend 80.
-                    if (finalColorStr.length == 9) {
-                        "#80" + finalColorStr.substring(3)
-                    } else {
-                        "#80" + finalColorStr.substring(1)
-                    }
+                
+                // Smart opacity & thickness: if segment is panned multiple times, increase opacity & thickness slightly
+                val traversalCount = segmentCountMap[getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude)] ?: 1
+                val opacityHex = if (isSelected) {
+                    "FF" // Solid opacity for selected walk
                 } else {
-                    finalColorStr
+                    // scale opacity from 0.45 (72 in hex) up to 0.90 (E6 in hex) based on traversals
+                    val alphaVal = (72 + (traversalCount - 1) * 20).coerceAtMost(230)
+                    String.format("%02X", alphaVal)
                 }
+
+                val hexColor = if (finalColorStr.length == 9) {
+                    "#" + opacityHex + finalColorStr.substring(3)
+                } else {
+                    "#" + opacityHex + finalColorStr.substring(1)
+                }
+                
+                val dynamicStrokeWidth = if (isSelected) strokeWidth else (strokeWidth + (traversalCount - 1) * 1.5f).coerceAtMost(16f)
 
                 val pastPolyline = Polyline().apply {
                     outlinePaint.color = android.graphics.Color.parseColor(hexColor)
-                    outlinePaint.strokeWidth = strokeWidth
+                    outlinePaint.strokeWidth = dynamicStrokeWidth
                     outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
                     outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
                     setPoints(segmentGeo)
@@ -316,28 +350,30 @@ fun OsmMapView(
             }
 
             // Draw past walk POIs
-            val walkPois = try {
-                val listType = object : TypeToken<List<WalkPoi>>() {}.type
-                gson.fromJson<List<WalkPoi>>(walk.poisJson, listType) ?: emptyList()
-            } catch (e: Exception) {
-                emptyList()
-            }
-            for (poi in walkPois) {
-                val poiGeoPoint = GeoPoint(poi.latitude, poi.longitude)
-                val marker = Marker(mapView).apply {
-                    position = poiGeoPoint
-                    val pinDrawable = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_myplaces)?.mutate()?.apply {
-                        androidx.core.graphics.drawable.DrawableCompat.setTint(this, android.graphics.Color.parseColor("#8B5CF6"))
-                    }
-                    icon = pinDrawable
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                    title = poi.text ?: "POI"
-                    setOnMarkerClickListener { _, _ ->
-                        onPoiClick?.invoke(poi)
-                        true
-                    }
+            if (showPois) {
+                val walkPois = try {
+                    val listType = object : TypeToken<List<WalkPoi>>() {}.type
+                    gson.fromJson<List<WalkPoi>>(walk.poisJson, listType) ?: emptyList()
+                } catch (e: Exception) {
+                    emptyList()
                 }
-                mapView.overlays.add(marker)
+                for (poi in walkPois) {
+                    val poiGeoPoint = GeoPoint(poi.latitude, poi.longitude)
+                    val marker = Marker(mapView).apply {
+                        position = poiGeoPoint
+                        val pinDrawable = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_myplaces)?.mutate()?.apply {
+                            androidx.core.graphics.drawable.DrawableCompat.setTint(this, android.graphics.Color.parseColor("#8B5CF6"))
+                        }
+                        icon = pinDrawable
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        title = poi.text ?: "POI"
+                        setOnMarkerClickListener { _, _ ->
+                            onPoiClick?.invoke(poi)
+                            true
+                        }
+                    }
+                    mapView.overlays.add(marker)
+                }
             }
         }
 
@@ -399,22 +435,24 @@ fun OsmMapView(
         }
 
         // 2.5 Draw active walk POIs
-        for (poi in activePois) {
-            val poiGeoPoint = GeoPoint(poi.latitude, poi.longitude)
-            val marker = Marker(mapView).apply {
-                position = poiGeoPoint
-                val pinDrawable = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_myplaces)?.mutate()?.apply {
-                    androidx.core.graphics.drawable.DrawableCompat.setTint(this, android.graphics.Color.parseColor("#06B6D4"))
+        if (showPois) {
+            for (poi in activePois) {
+                val poiGeoPoint = GeoPoint(poi.latitude, poi.longitude)
+                val marker = Marker(mapView).apply {
+                    position = poiGeoPoint
+                    val pinDrawable = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_myplaces)?.mutate()?.apply {
+                        androidx.core.graphics.drawable.DrawableCompat.setTint(this, android.graphics.Color.parseColor("#06B6D4"))
+                    }
+                    icon = pinDrawable
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    title = poi.text ?: "POI"
+                    setOnMarkerClickListener { _, _ ->
+                        onPoiClick?.invoke(poi)
+                        true
+                    }
                 }
-                icon = pinDrawable
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                title = poi.text ?: "POI"
-                setOnMarkerClickListener { _, _ ->
-                    onPoiClick?.invoke(poi)
-                    true
-                }
+                mapView.overlays.add(marker)
             }
-            mapView.overlays.add(marker)
         }
 
         // 3. Dynamic camera centering and zooming
@@ -759,7 +797,7 @@ fun DashboardScreen(
                 ) {
                     StatCard(
                         modifier = Modifier.weight(1f),
-                        title = "Walks Count",
+                        title = "Tracks Count",
                         value = totalWalksCount.toString(),
                         icon = Icons.Default.DirectionsWalk,
                         color = NeonCyan
@@ -788,7 +826,7 @@ fun DashboardScreen(
             // Walks History list header
             item {
                 Text(
-                    text = "Walk History",
+                    text = "Travel History",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -816,14 +854,14 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "No walks recorded yet",
+                                text = "No records logged yet",
                                 color = Color.White,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Medium
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Tap the start button below to record your first walking exploration!",
+                                text = "Tap the start button below to record your first exploration track!",
                                 color = TextGray,
                                 fontSize = 13.sp,
                                 textAlign = TextAlign.Center
@@ -887,7 +925,7 @@ fun DashboardScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Start Walk",
+                        text = "Start Track",
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
@@ -984,6 +1022,28 @@ fun WalkHistoryItem(
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val gson = remember { Gson() }
+    val pointsListType = object : TypeToken<List<WalkPoint>>() {}.type
+    val points: List<WalkPoint> = try {
+        gson.fromJson(walk.pointsJson, pointsListType) ?: emptyList()
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    // Determine travel mode: if more than 50% of segment speed values are >= 7.0 km/h, classify as Drive
+    val drivePointsCount = points.count { it.speed * 3.6f >= 7.0f }
+    val isDrive = points.isNotEmpty() && (drivePointsCount.toDouble() / points.size) > 0.5
+
+    val displayTitle = if (walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at")) {
+        val timeLabel = walk.title.substringAfter("at ")
+        if (isDrive) "Drive at $timeLabel" else "Walk at $timeLabel"
+    } else {
+        walk.title
+    }
+
+    val modeIcon = if (isDrive) Icons.Default.DirectionsCar else Icons.Default.DirectionsWalk
+    val modeColor = if (isDrive) Color(0xFFEF4444) else NeonCyan
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1000,14 +1060,25 @@ fun WalkHistoryItem(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = walk.title,
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = modeIcon,
+                        contentDescription = if (isDrive) "Drive" else "Walk",
+                        tint = modeColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = displayTitle,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1075,6 +1146,7 @@ fun RecordScreen(
     val durationSeconds by viewModel.activeDurationSeconds.collectAsState(initial = 0L)
     val walks by viewModel.allWalks.collectAsState()
     val isDarkMap by viewModel.isDarkMap.collectAsState()
+    val showPois by viewModel.showPois.collectAsState()
     
     var showAddPoiDialog by remember { mutableStateOf(false) }
     var selectedPoi by remember { mutableStateOf<WalkPoi?>(null) }
@@ -1094,6 +1166,7 @@ fun RecordScreen(
             isDarkMap = isDarkMap,
             showWalks = showWalks,
             showDrives = showDrives,
+            showPois = showPois,
             activePois = activePois,
             onPoiClick = { selectedPoi = it }
         )
@@ -1196,6 +1269,24 @@ fun RecordScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Text("Drives (7+)", color = Color.White, fontSize = 11.sp)
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.clickable { viewModel.toggleShowPois() }
+                ) {
+                    Checkbox(
+                        checked = showPois,
+                        onCheckedChange = { viewModel.toggleShowPois() },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = ElectricViolet,
+                            uncheckedColor = TextGray,
+                            checkmarkColor = Color.White
+                        ),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text("POIs (Markers)", color = Color.White, fontSize = 11.sp)
                 }
             }
         }
@@ -1476,6 +1567,7 @@ fun DetailScreen(
 
             val showWalks by viewModel.showWalks.collectAsState()
             val showDrives by viewModel.showDrives.collectAsState()
+            val showPois by viewModel.showPois.collectAsState()
 
             // Map View
             OsmMapView(
@@ -1485,6 +1577,7 @@ fun DetailScreen(
                 isDarkMap = isDarkMap,
                 showWalks = showWalks,
                 showDrives = showDrives,
+                showPois = showPois,
                 activePois = walkPois,
                 onPoiClick = { selectedPoi = it }
             )
@@ -1828,6 +1921,7 @@ fun AllWalksMapScreen(
     val isDarkMap by viewModel.isDarkMap.collectAsState()
     val showWalks by viewModel.showWalks.collectAsState()
     val showDrives by viewModel.showDrives.collectAsState()
+    val showPois by viewModel.showPois.collectAsState()
     var selectedPoi by remember { mutableStateOf<WalkPoi?>(null) }
     var selectedWalk by remember { mutableStateOf<Walk?>(null) }
 
@@ -1841,6 +1935,7 @@ fun AllWalksMapScreen(
             isDarkMap = isDarkMap,
             showWalks = showWalks,
             showDrives = showDrives,
+            showPois = showPois,
             onPoiClick = { selectedPoi = it }
         )
 
@@ -1942,6 +2037,24 @@ fun AllWalksMapScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Text("Drives (7+)", color = Color.White, fontSize = 11.sp)
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.clickable { viewModel.toggleShowPois() }
+                ) {
+                    Checkbox(
+                        checked = showPois,
+                        onCheckedChange = { viewModel.toggleShowPois() },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = ElectricViolet,
+                            uncheckedColor = TextGray,
+                            checkmarkColor = Color.White
+                        ),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text("POIs (Markers)", color = Color.White, fontSize = 11.sp)
                 }
             }
         }

@@ -44,6 +44,9 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
     private val _showDrives = MutableStateFlow(true)
     val showDrives = _showDrives.asStateFlow()
 
+    private val _showPois = MutableStateFlow(true)
+    val showPois = _showPois.asStateFlow()
+
     fun toggleMapStyle() {
         _isDarkMap.value = !_isDarkMap.value
     }
@@ -54,6 +57,10 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleShowDrives() {
         _showDrives.value = !_showDrives.value
+    }
+
+    fun toggleShowPois() {
+        _showPois.value = !_showPois.value
     }
 
     private val serviceConnection = object : ServiceConnection {
