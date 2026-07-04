@@ -835,7 +835,7 @@ fun DashboardScreen(
             }
 
             // Empty state or History list items
-            if (walks.isEmpty()) {
+            if (filteredWalks.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -870,7 +870,7 @@ fun DashboardScreen(
                     }
                 }
             } else {
-                items(walks, key = { it.id }) { walk ->
+                items(filteredWalks, key = { it.id }) { walk ->
                     WalkHistoryItem(
                         walk = walk,
                         onClick = { onWalkClick(walk.id) },
