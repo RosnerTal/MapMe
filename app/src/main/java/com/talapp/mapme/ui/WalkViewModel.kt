@@ -47,6 +47,9 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
     private val _showPois = MutableStateFlow(true)
     val showPois = _showPois.asStateFlow()
 
+    private val _lastSyncedTime = MutableStateFlow<String?>("Not synced yet")
+    val lastSyncedTime = _lastSyncedTime.asStateFlow()
+
     fun toggleMapStyle() {
         _isDarkMap.value = !_isDarkMap.value
     }
@@ -268,8 +271,12 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
                         repository.insertWalk(walk)
                     }
                 }
+                
+                val nowStr = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())
+                _lastSyncedTime.value = "Last synced today at $nowStr"
             } catch (e: Exception) {
                 e.printStackTrace()
+                _lastSyncedTime.value = "Sync failed"
             }
         }
     }

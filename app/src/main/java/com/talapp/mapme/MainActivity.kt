@@ -31,9 +31,9 @@ class MainActivity : ComponentActivity() {
     try {
       val options = com.google.firebase.FirebaseOptions.Builder()
         .setApiKey("AIzaSyC5CE0tY6k56c1ZZuKCS6kFqxDVstO8BkE")
-        .setApplicationId("1:439123831099:web:bbe9b31179680cd9a06f1e")
+        .setApplicationId("1:439123831099:android:a4a6e8df81878d38") // Changed to Android app id
         .setProjectId("travel-39d90")
-        .setStorageBucket("travel-39d90.firebasestorage.app")
+        .setStorageBucket("travel-39d90.appspot.com")
         .build()
 
       if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {

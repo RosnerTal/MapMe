@@ -582,6 +582,9 @@ fun DashboardScreen(
     val currentUser by viewModel.currentUser.collectAsState()
     val timeframe by viewModel.selectedTimeframe.collectAsState()
     val filteredWalks by viewModel.filteredWalks.collectAsState()
+    val lastSyncedTime by viewModel.lastSyncedTime.collectAsState()
+
+    var showSyncPanel by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -638,118 +641,127 @@ fun DashboardScreen(
                             fontSize = 14.sp
                         )
                     }
+                    
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(Slate800)
-                            .border(1.dp, GlassBorder, CircleShape),
+                            .border(1.dp, GlassBorder, CircleShape)
+                            .clickable { showSyncPanel = !showSyncPanel },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Person,
                             contentDescription = "Profile",
-                            tint = NeonCyan
+                            tint = if (showSyncPanel) ElectricViolet else NeonCyan
                         )
                     }
                 }
             }
 
-            // Cloud Sync Panel
+            // Cloud Sync Panel (toggled via profile avatar button click)
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Slate800),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(
-                        1.5.dp,
-                        Brush.linearGradient(listOf(NeonCyan.copy(alpha = 0.35f), ElectricViolet.copy(alpha = 0.35f)))
-                    )
+                AnimatedVisibility(
+                    visible = showSyncPanel
                 ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Slate800),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(
+                            1.5.dp,
+                            Brush.linearGradient(listOf(NeonCyan.copy(alpha = 0.35f), ElectricViolet.copy(alpha = 0.35f)))
+                        )
                     ) {
-                        if (currentUser == null) {
-                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text(
-                                    text = "Cloud Sync Viewer",
-                                    color = Color.White,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Sign in to view walks online",
-                                    color = TextGray,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = onGoogleSignInClick,
-                                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    Text("Google", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            if (currentUser == null) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                    Text(
+                                        text = "Cloud Sync Dashboard",
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Sign in to backup & view tracks online",
+                                        color = TextGray,
+                                        fontSize = 11.sp
+                                    )
                                 }
                                 
-                                Button(
-                                    onClick = { viewModel.signInAnonymously() },
-                                    colors = ButtonDefaults.buttonColors(containerColor = ElectricViolet),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    Text("Guest", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = onGoogleSignInClick,
+                                        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Text("Google", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    
+                                    Button(
+                                        onClick = { viewModel.signInAnonymously() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = ElectricViolet),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.height(32.dp)
+                                    ) {
+                                        Text("Guest", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
-                            }
-                        } else {
-                            val isGuest = currentUser?.isAnonymous == true
-                            val displayName = if (isGuest) "Guest Explorer" else (currentUser?.displayName ?: "User")
-                            
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Synced as $displayName",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (isGuest) "Temporary Guest Profile" else "Google Cloud Account Active",
-                                    color = if (isGuest) ElectricViolet else NeonCyan,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                            } else {
+                                val isGuest = currentUser?.isAnonymous == true
+                                val displayName = if (isGuest) "Guest Explorer" else (currentUser?.displayName ?: "User")
+                                
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Synced as $displayName",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = lastSyncedTime ?: "Sync active",
+                                        color = NeonCyan,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { viewModel.syncWalks() }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = "Sync Now",
-                                        tint = NeonCyan,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                IconButton(onClick = { viewModel.signOut() }) {
-                                    Icon(
-                                        imageVector = Icons.Default.ExitToApp,
-                                        contentDescription = "Sign Out",
-                                        tint = Color(0xFFEF4444),
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { viewModel.syncWalks() }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Sync Now",
+                                            tint = NeonCyan,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    IconButton(onClick = { viewModel.signOut() }) {
+                                        Icon(
+                                            imageVector = Icons.Default.ExitToApp,
+                                            contentDescription = "Sign Out",
+                                            tint = Color(0xFFEF4444),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+            
+            // Delete the old duplicate Cloud Sync item
+            // (Target content below will replace the original layout block)
 
             // Timeframe Selector Pills
             item {
@@ -1034,9 +1046,10 @@ fun WalkHistoryItem(
     val drivePointsCount = points.count { it.speed * 3.6f >= 7.0f }
     val isDrive = points.isNotEmpty() && (drivePointsCount.toDouble() / points.size) > 0.5
 
-    val displayTitle = if (walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at")) {
-        val timeLabel = walk.title.substringAfter("at ")
-        if (isDrive) "Drive at $timeLabel" else "Walk at $timeLabel"
+    val displayTitle = if (walk.title.startsWith("Walk on") || walk.title.startsWith("Drive on") || walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at")) {
+        val separator = if (walk.title.contains("on ")) "on " else "at "
+        val timeLabel = walk.title.substringAfter(separator)
+        if (isDrive) "Drive $separator$timeLabel" else "Walk $separator$timeLabel"
     } else {
         walk.title
     }
