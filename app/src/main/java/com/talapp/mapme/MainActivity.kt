@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
     // Dynamic Firebase initialization using your web configuration parameters
     try {
       val options = com.google.firebase.FirebaseOptions.Builder()
-        .setApiKey("AIzaSyC5CE0tY6k56c1ZZuKCS6kFqxDVstO8BkE")
+        .setApiKey("AIzaSyCpaljr7hHzbhUCrNMS5jfsl5jY2z5H4Gw")
         .setApplicationId("1:439123831099:android:a4a6e8df81878d38") // Changed to Android app id
         .setProjectId("travel-39d90")
         .setStorageBucket("travel-39d90.appspot.com")
