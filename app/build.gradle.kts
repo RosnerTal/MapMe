@@ -9,11 +9,11 @@ android {
     namespace = "com.talapp.mapme"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.talapp.mapme"
+        applicationId = "com.example.mapme"
         minSdk = 24
         targetSdk = 36
-        versionCode = 23
-        versionName = "2.3"
+        versionCode = 24
+        versionName = "2.4"
     }
 
     signingConfigs {

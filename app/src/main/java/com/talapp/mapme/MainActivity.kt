@@ -30,10 +30,10 @@ class MainActivity : ComponentActivity() {
     // Dynamic Firebase initialization using your web configuration parameters
     try {
       val options = com.google.firebase.FirebaseOptions.Builder()
-        .setApiKey("AIzaSyCpaljr7hHzbhUCrNMS5jfsl5jY2z5H4Gw")
-        .setApplicationId("1:439123831099:android:a4a6e8df81878d38") // Changed to Android app id
+        .setApiKey("AIzaSyCbhXlhUCzQB0ol_D6rfUnjqkJu2L7iF-8")
+        .setApplicationId("1:439123831099:android:139991d44d993e65a06f1e")
         .setProjectId("travel-39d90")
-        .setStorageBucket("travel-39d90.appspot.com")
+        .setStorageBucket("travel-39d90.firebasestorage.app")
         .build()
 
       if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {
