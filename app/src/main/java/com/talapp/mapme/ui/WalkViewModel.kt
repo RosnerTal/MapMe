@@ -209,16 +209,25 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signInAnonymously() {
-        auth.signInAnonymously()
+        auth.signInAnonymously().addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                _currentUser.value = auth.currentUser
+            }
+        }
     }
 
     fun signInWithGoogleCredential(idToken: String) {
         val credential = GoogleAuthProvider.getCredential(idToken, null)
-        auth.signInWithCredential(credential)
+        auth.signInWithCredential(credential).addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                _currentUser.value = auth.currentUser
+            }
+        }
     }
 
     fun signOut() {
         auth.signOut()
+        _currentUser.value = null
     }
 
     fun syncWalks() {
