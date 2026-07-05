@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
     try {
       val options = com.google.firebase.FirebaseOptions.Builder()
         .setApiKey("AIzaSyCbhXlhUCzQB0ol_D6rfUnjqkJu2L7iF-8")
-        .setApplicationId("1:439123831099:android:139991d44d993e65a06f1e")
+        .setApplicationId("1:439123831099:android:52211075740d8340a06f1e") // Updated to com.talapp.mapme client ID
         .setProjectId("travel-39d90")
         .setStorageBucket("travel-39d90.firebasestorage.app")
         .build()
