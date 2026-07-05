@@ -212,6 +212,8 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         auth.signInAnonymously().addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 _currentUser.value = auth.currentUser
+            } else {
+                android.widget.Toast.makeText(getApplication(), "Firebase Auth Failed: " + task.exception?.localizedMessage, android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -221,6 +223,8 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         auth.signInWithCredential(credential).addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 _currentUser.value = auth.currentUser
+            } else {
+                android.widget.Toast.makeText(getApplication(), "Firebase Auth Credentials Failed: " + task.exception?.localizedMessage, android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }

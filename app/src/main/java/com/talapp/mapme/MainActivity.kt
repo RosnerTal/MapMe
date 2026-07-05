@@ -60,8 +60,14 @@ class MainActivity : ComponentActivity() {
           val account = task.getResult(ApiException::class.java)
           account.idToken?.let { token ->
               walkViewModel.signInWithGoogleCredential(token)
+          } ?: run {
+              android.widget.Toast.makeText(this, "Sign-In Error: idToken is null", android.widget.Toast.LENGTH_LONG).show()
           }
       } catch (e: ApiException) {
+          android.widget.Toast.makeText(this, "Google Sign-In Failed: API Exception Code " + e.statusCode, android.widget.Toast.LENGTH_LONG).show()
+          e.printStackTrace()
+      } catch (e: Exception) {
+          android.widget.Toast.makeText(this, "Sign-In Failed: " + e.localizedMessage, android.widget.Toast.LENGTH_LONG).show()
           e.printStackTrace()
       }
     }
