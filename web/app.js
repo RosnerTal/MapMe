@@ -273,9 +273,10 @@ function loadWalks(uid) {
                 const isDrive = points.length > 0 && (driveCount / points.length) > 0.5;
                 
                 let displayTitle = walk.title;
-                if (walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at")) {
-                    const timeLabel = walk.title.substring(walk.title.indexOf("at "));
-                    displayTitle = isDrive ? `Drive ${timeLabel}` : `Walk ${timeLabel}`;
+                if (walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at") || walk.title.startsWith("Walk on") || walk.title.startsWith("Drive on")) {
+                    const separator = walk.title.includes("at ") ? "at " : "on ";
+                    const timeLabel = walk.title.substring(walk.title.indexOf(separator) + separator.length);
+                    displayTitle = isDrive ? `Drive ${separator}${timeLabel}` : `Walk ${separator}${timeLabel}`;
                 }
 
                 const card = document.createElement("div");
@@ -557,10 +558,9 @@ function redrawAllMapLayers(fitActiveWalk = false) {
             const basePastColor = isSelected ? "#10b981" : "#8b5cf6"; // Neon Emerald if selected, otherwise Electric Violet
             const driveColor = isSelected ? "#ff3b30" : "#ee5859"; // Bright red if selected, otherwise lighter red
             
-            for (let i = 0; i < pts.length - 1; i++) {
-                const pt1 = pts[i];
-                const pt2 = pts[i + 1];
-                
+            // Build mode information for every point
+            const pointsMode = []; // Array of booleans: true = driving, false = walking
+            for (let i = 0; i < pts.length; i++) {
                 // Determine travel mode (Walk vs Drive) by title prefix for backwards compatibility
                 const isDriveModeByTitle = walk.title.startsWith("Drive on") || walk.title.startsWith("Drive at");
                 const isWalkModeByTitle = walk.title.startsWith("Walk on") || walk.title.startsWith("Walk at");
@@ -573,34 +573,58 @@ function redrawAllMapLayers(fitActiveWalk = false) {
                 } else {
                     // Fallback to speed threshold calculation if title has no clear mode keyword
                     const pointsWindow = [];
-                    if (i > 0) pointsWindow.push(pts[i - 1]);
-                    pointsWindow.push(pt1);
-                    pointsWindow.push(pt2);
-                    if (i < pts.length - 2) pointsWindow.push(pts[i + 2]);
+                    const startIdx = Math.max(0, i - 1);
+                    const endIdx = Math.min(pts.length - 1, i + 2);
+                    for (let w = startIdx; w <= endIdx; w++) {
+                        pointsWindow.push(pts[w]);
+                    }
                     
                     const avgSpeedKmh = (pointsWindow.reduce((sum, p) => sum + p.speed, 0) / pointsWindow.length) * 3.6;
                     isDriving = avgSpeedKmh >= 7.0;
                 }
-                
-                // Skip rendering if filtered out
-                if (isDriving && !showDrives) continue;
-                if (!isDriving && !showWalks) continue;
+                pointsMode.push(isDriving);
+            }
 
-                const segmentLatLngs = [[pt1.latitude, pt1.longitude], [pt2.latitude, pt2.longitude]];
-                allLatLns.push(segmentLatLngs[0], segmentLatLngs[1]);
-                
+            // Group contiguous points of the same travel mode
+            let currentGroup = [];
+            let currentGroupMode = null;
+
+            for (let i = 0; i < pts.length; i++) {
+                const pt = pts[i];
+                const ptMode = pointsMode[i];
+
+                if (currentGroup.length === 0) {
+                    currentGroup.push([pt.latitude, pt.longitude]);
+                    currentGroupMode = ptMode;
+                } else if (ptMode === currentGroupMode) {
+                    currentGroup.push([pt.latitude, pt.longitude]);
+                } else {
+                    // Draw current segment group
+                    drawContiguousSegment(currentGroup, currentGroupMode, isSelected, walk);
+                    // Start new group, carrying over the last point of the previous group to avoid gaps
+                    currentGroup = [[pts[i - 1].latitude, pts[i - 1].longitude], [pt.latitude, pt.longitude]];
+                    currentGroupMode = ptMode;
+                }
+            }
+
+            if (currentGroup.length > 1) {
+                drawContiguousSegment(currentGroup, currentGroupMode, isSelected, walk);
+            }
+
+            function drawContiguousSegment(latlngs, isDriving, isSelected, walk) {
+                // Skip rendering if filtered out
+                if (isDriving && !showDrives) return;
+                if (!isDriving && !showWalks) return;
+
+                latlngs.forEach(ll => allLatLns.push(ll));
+
                 const finalColor = isDriving ? driveColor : basePastColor;
                 
-                // Dynamic styling based on traversal density
-                const key = getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude);
-                const traversalCount = segmentCountMap[key] || 1;
-                
-                // opacity scale from 0.45 up to 0.90 (make it fully opaque if selected)
-                const dynamicOpacity = isSelected ? 1.0 : Math.min(0.45 + (traversalCount - 1) * 0.15, 0.90);
-                // weight scale from 4.5 up to 9.0 (thicker if selected)
-                const dynamicWeight = isSelected ? 8.5 : Math.min(4.5 + (traversalCount - 1) * 1.0, 9.0);
+                // Group opacity and thickness properties
+                const dynamicOpacity = isSelected ? 1.0 : 0.65;
+                const dynamicWeight = isSelected ? 8.5 : 5.0;
 
-                const pastLine = L.polyline(segmentLatLngs, {
+                const pastLine = L.polyline(latlngs, {
                     color: finalColor,
                     opacity: dynamicOpacity,
                     weight: dynamicWeight,
