@@ -160,10 +160,11 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         service?.elapsedTimeSeconds ?: flowOf(0L)
     }
 
-    fun startWalk() {
+    fun startWalk(isDrive: Boolean = false) {
         val context = getApplication<Application>().applicationContext
         val intent = Intent(context, LocationService::class.java).apply {
             action = LocationService.ACTION_START
+            putExtra("EXTRA_IS_DRIVE", isDrive)
         }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             context.startForegroundService(intent)

@@ -36,15 +36,16 @@ fun MainNavigation(
           entry<Dashboard> {
             DashboardScreen(
               viewModel = walkViewModel,
-              onStartWalkClick = { backStack.add(Record) },
+              onStartWalkClick = { isDrive -> backStack.add(Record(isDrive)) },
               onWalkClick = { walkId -> backStack.add(Detail(walkId)) },
               onViewMapClick = { backStack.add(AllWalksMap) },
               onGoogleSignInClick = onGoogleSignInClick
             )
           }
-          entry<Record> {
+          entry<Record> { key ->
             RecordScreen(
               viewModel = walkViewModel,
+              isDrive = key.isDrive,
               onBackClick = { backStack.removeLastOrNull() }
             )
           }

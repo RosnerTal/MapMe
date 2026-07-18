@@ -142,7 +142,8 @@ fun OsmMapView(
     showDrives: Boolean = true,
     showPois: Boolean = true,
     activePois: List<WalkPoi> = emptyList(),
-    onPoiClick: ((WalkPoi) -> Unit)? = null
+    onPoiClick: ((WalkPoi) -> Unit)? = null,
+    isDriveRecording: Boolean = false
 ) {
     val context = LocalContext.current
     val gson = remember { Gson() }
@@ -224,7 +225,7 @@ fun OsmMapView(
     }
 
     // Redraw paths and markers when data changes
-    LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives, showPois) {
+    LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives, showPois, isDriveRecording) {
         mapView.overlays.clear()
 
         // 1. Pre-calculate overlaps for past walk segments to render repeated paths darker/bolder
@@ -298,8 +299,19 @@ fun OsmMapView(
                 pointsWindow.add(pt2)
                 if (i < walkPoints.size - 2) pointsWindow.add(walkPoints[i + 2])
                 
-                val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
-                val isDriving = avgSpeedKmh >= 7.0f
+                // Determine travel mode (Walk vs Drive) by title prefix for backwards compatibility
+                val isDriveModeByTitle = walk.title.startsWith("Drive on", ignoreCase = true) || walk.title.startsWith("Drive at", ignoreCase = true)
+                val isWalkModeByTitle = walk.title.startsWith("Walk on", ignoreCase = true) || walk.title.startsWith("Walk at", ignoreCase = true)
+                
+                val isDriving = if (isDriveModeByTitle) {
+                    true
+                } else if (isWalkModeByTitle) {
+                    false
+                } else {
+                    // Fallback to speed threshold calculation if title has no clear mode keyword
+                    val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
+                    avgSpeedKmh >= 7.0f
+                }
                 
                 // Skip rendering if filtered out
                 if (isDriving && !showDrives) {
@@ -395,7 +407,7 @@ fun OsmMapView(
                 if (i < points.size - 2) pointsWindow.add(points[i + 2])
                 
                 val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
-                val isDriving = avgSpeedKmh >= 7.0f
+                val isDriving = isDriveRecording
                 
                 // Skip rendering if filtered out
                 if (isDriving && !showDrives) {
@@ -570,7 +582,7 @@ fun OsmMapView(
 @Composable
 fun DashboardScreen(
     viewModel: WalkViewModel,
-    onStartWalkClick: () -> Unit,
+    onStartWalkClick: (Boolean) -> Unit,
     onWalkClick: (Long) -> Unit,
     onViewMapClick: () -> Unit,
     onGoogleSignInClick: () -> Unit = {}
@@ -892,56 +904,104 @@ fun DashboardScreen(
             }
         }
 
-        // Bottom Actions (Row)
-        Row(
+        // Bottom Actions (Column layout to hold Walk/Drive side-by-side and Explore Map centered underneath)
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp)
+                .padding(bottom = 24.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Start Walk Button
-            Button(
-                onClick = onStartWalkClick,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                contentPadding = PaddingValues(),
-                shape = RoundedCornerShape(30.dp),
-                modifier = Modifier
-                    .width(160.dp)
-                    .height(54.dp)
-                    .clip(RoundedCornerShape(30.dp))
-                    .border(
-                        BorderStroke(1.dp, Brush.linearGradient(listOf(NeonCyanGlow, ElectricViolet))),
-                        RoundedCornerShape(30.dp)
-                    )
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                NeonCyan.copy(alpha = 0.85f),
-                                ElectricViolet.copy(alpha = 0.85f)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Start Walk Button
+                Button(
+                    onClick = { onStartWalkClick(false) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                    contentPadding = PaddingValues(),
+                    shape = RoundedCornerShape(30.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .border(
+                            BorderStroke(1.dp, Brush.linearGradient(listOf(NeonCyanGlow, ElectricViolet))),
+                            RoundedCornerShape(30.dp)
+                        )
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    NeonCyan.copy(alpha = 0.85f),
+                                    ElectricViolet.copy(alpha = 0.85f)
+                                )
                             )
                         )
-                    )
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Start",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Start Track",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DirectionsWalk,
+                            contentDescription = "Walk",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Walk",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Start Drive Button
+                Button(
+                    onClick = { onStartWalkClick(true) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                    contentPadding = PaddingValues(),
+                    shape = RoundedCornerShape(30.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .border(
+                            BorderStroke(1.dp, Brush.linearGradient(listOf(Color(0xFFEF4444), ElectricViolet))),
+                            RoundedCornerShape(30.dp)
+                        )
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFFEF4444).copy(alpha = 0.85f),
+                                    ElectricViolet.copy(alpha = 0.85f)
+                                )
+                            )
+                        )
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DirectionsCar,
+                            contentDescription = "Drive",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Drive",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -952,8 +1012,8 @@ fun DashboardScreen(
                 contentPadding = PaddingValues(),
                 shape = RoundedCornerShape(30.dp),
                 modifier = Modifier
-                    .width(160.dp)
-                    .height(54.dp)
+                    .fillMaxWidth()
+                    .height(50.dp)
                     .clip(RoundedCornerShape(30.dp))
                     .border(
                         BorderStroke(1.dp, GlassBorder),
@@ -972,7 +1032,7 @@ fun DashboardScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Explore Map",
+                        text = "Explore Combined Map",
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
@@ -1150,6 +1210,7 @@ fun WalkHistoryItem(
 @Composable
 fun RecordScreen(
     viewModel: WalkViewModel,
+    isDrive: Boolean,
     onBackClick: () -> Unit
 ) {
     val isTracking by viewModel.isTracking.collectAsState(initial = false)
@@ -1168,6 +1229,13 @@ fun RecordScreen(
     val showDrives by viewModel.showDrives.collectAsState()
     val currentLoc = points.lastOrNull()
 
+    // Automatically trigger starting the track with the selected mode when entering this screen
+    LaunchedEffect(isDrive) {
+        if (!isTracking && points.isEmpty()) {
+            viewModel.startWalk(isDrive)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // Map Background (shows past walks within 5km, and active points)
         OsmMapView(
@@ -1181,7 +1249,8 @@ fun RecordScreen(
             showDrives = showDrives,
             showPois = showPois,
             activePois = activePois,
-            onPoiClick = { selectedPoi = it }
+            onPoiClick = { selectedPoi = it },
+            isDriveRecording = isDrive
         )
 
         // Floating Back Button (Glassmorphic)
@@ -1466,7 +1535,7 @@ fun RecordScreen(
                         } else {
                             // Resume/Start Button
                             IconButtonControl(
-                                onClick = { viewModel.startWalk() },
+                                onClick = { viewModel.startWalk(isDrive) },
                                 icon = Icons.Default.PlayArrow,
                                 contentDescription = "Resume",
                                 backgroundColor = NeonCyan

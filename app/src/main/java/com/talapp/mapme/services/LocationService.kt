@@ -77,9 +77,14 @@ class LocationService : Service() {
         createNotificationChannel()
     }
 
+    private var isTrackingDrive = false
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startTracking()
+            ACTION_START -> {
+                isTrackingDrive = intent.getBooleanExtra("EXTRA_IS_DRIVE", false)
+                startTracking()
+            }
             ACTION_PAUSE -> pauseTracking()
             ACTION_STOP -> stopTracking()
         }
@@ -215,7 +220,8 @@ class LocationService : Service() {
                 val db = WalkDatabase.getDatabase(applicationContext)
                 val dateStr = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date())
                 val timeStr = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())
-                val title = "Walk on $dateStr ($timeStr)"
+                val prefix = if (isTrackingDrive) "Drive" else "Walk"
+                val title = "$prefix on $dateStr ($timeStr)"
                 val walk = Walk(
                     title = title,
                     startTime = startTimeMillis,
