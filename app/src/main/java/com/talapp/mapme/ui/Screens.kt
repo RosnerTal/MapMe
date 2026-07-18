@@ -286,53 +286,78 @@ fun OsmMapView(
             val driveColor = "#FFEE5859" // Vibrant Coral/Red for Driving >= 7km/h
             val strokeWidth = if (isSelected) 14f else 8f
 
-            var i = 0
-            while (i < walkPoints.size - 1) {
-                val pt1 = walkPoints[i]
-                val pt2 = walkPoints[i + 1]
-                
-                // Smart speed threshold: Compute the average speed of the local window
-                // (current point, next point, plus surrounding points if available)
-                val pointsWindow = mutableListOf<WalkPoint>()
-                if (i > 0) pointsWindow.add(walkPoints[i - 1])
-                pointsWindow.add(pt1)
-                pointsWindow.add(pt2)
-                if (i < walkPoints.size - 2) pointsWindow.add(walkPoints[i + 2])
-                
+            // Build mode information for every point in this walk
+            val pointsMode = walkPoints.mapIndexed { idx, pt ->
                 // Determine travel mode (Walk vs Drive) by title prefix for backwards compatibility
                 val isDriveModeByTitle = walk.title.startsWith("Drive on", ignoreCase = true) || walk.title.startsWith("Drive at", ignoreCase = true)
                 val isWalkModeByTitle = walk.title.startsWith("Walk on", ignoreCase = true) || walk.title.startsWith("Walk at", ignoreCase = true)
                 
-                val isDriving = if (isDriveModeByTitle) {
+                if (isDriveModeByTitle) {
                     true
                 } else if (isWalkModeByTitle) {
                     false
                 } else {
                     // Fallback to speed threshold calculation if title has no clear mode keyword
+                    val pointsWindow = mutableListOf<WalkPoint>()
+                    val startIdx = Math.max(0, idx - 1)
+                    val endIdx = Math.min(walkPoints.size - 1, idx + 2)
+                    for (w in startIdx..endIdx) {
+                        pointsWindow.add(walkPoints[w])
+                    }
                     val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
                     avgSpeedKmh >= 7.0f
                 }
-                
-                // Skip rendering if filtered out
-                if (isDriving && !showDrives) {
-                    i++
-                    continue
-                }
-                if (!isDriving && !showWalks) {
-                    i++
-                    continue
-                }
+            }
 
-                val segmentGeo = listOf(GeoPoint(pt1.latitude, pt1.longitude), GeoPoint(pt2.latitude, pt2.longitude))
+            // Group contiguous points of the same travel mode
+            val groups = mutableListOf<Pair<List<GeoPoint>, Boolean>>()
+            var currentGroup = mutableListOf<GeoPoint>()
+            var currentGroupMode: Boolean? = null
+
+            for (idx in walkPoints.indices) {
+                val pt = walkPoints[idx]
+                val ptMode = pointsMode[idx]
+
+                if (currentGroup.isEmpty()) {
+                    currentGroup.add(GeoPoint(pt.latitude, pt.longitude))
+                    currentGroupMode = ptMode;
+                } else if (ptMode == currentGroupMode) {
+                    currentGroup.add(GeoPoint(pt.latitude, pt.longitude))
+                } else {
+                    groups.add(currentGroup to currentGroupMode!!)
+                    // Start new group, carrying over the last point of the previous group to avoid gaps
+                    val prevPt = walkPoints[idx - 1]
+                    currentGroup = mutableListOf(GeoPoint(prevPt.latitude, prevPt.longitude), GeoPoint(pt.latitude, pt.longitude))
+                    currentGroupMode = ptMode
+                }
+            }
+
+            if (currentGroup.size > 1) {
+                groups.add(currentGroup to currentGroupMode!!)
+            }
+
+            for ((segmentGeo, isDriving) in groups) {
+                // Skip rendering if filtered out
+                if (isDriving && !showDrives) continue
+                if (!isDriving && !showWalks) continue
+
                 val finalColorStr = if (isDriving) driveColor else baseWalkColor
                 
                 // Smart opacity & thickness: if segment is panned multiple times, increase opacity & thickness slightly
-                val traversalCount = segmentCountMap[getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude)] ?: 1
+                // For simplified grouping, we check density key at the first segment of the group
+                val firstPt = segmentGeo.firstOrNull()
+                val secondPt = segmentGeo.getOrNull(1)
+                val traversalCount = if (firstPt != null && secondPt != null) {
+                    segmentCountMap[getSegmentKey(firstPt.latitude, firstPt.longitude, secondPt.latitude, secondPt.longitude)] ?: 1
+                } else {
+                    1
+                }
+
                 val opacityHex = if (isSelected) {
                     "FF" // Solid opacity for selected walk
                 } else {
                     // scale opacity from 0.45 (72 in hex) up to 0.90 (E6 in hex) based on traversals
-                    val alphaVal = (72 + (traversalCount - 1) * 20).coerceAtMost(230)
+                    val alphaVal = (120 + (traversalCount - 1) * 20).coerceAtMost(230)
                     String.format("%02X", alphaVal)
                 }
 
@@ -358,7 +383,6 @@ fun OsmMapView(
                     }
                 }
                 mapView.overlays.add(pastPolyline)
-                i++
             }
 
             // Draw past walk POIs
