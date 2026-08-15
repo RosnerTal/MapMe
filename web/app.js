@@ -399,8 +399,9 @@ function drawWalkRoute(walk, fitBounds = false) {
     const driveColor = '#ff3b30'; // Coral/Red for driving
     const pointsMode = [];
     for (let i = 0; i < points.length; i++) {
-        const isDriveModeByTitle = walk.title.startsWith("Drive on") || walk.title.startsWith("Drive at");
-        const isWalkModeByTitle = walk.title.startsWith("Walk on") || walk.title.startsWith("Walk at");
+        const titleLower = walk.title.toLowerCase();
+        const isDriveModeByTitle = titleLower.startsWith("drive on") || titleLower.startsWith("drive at");
+        const isWalkModeByTitle = titleLower.startsWith("walk on") || titleLower.startsWith("walk at");
         
         let isDriving = false;
         if (isDriveModeByTitle) {
@@ -591,9 +592,9 @@ function redrawAllMapLayers(fitActiveWalk = false) {
             // Build mode information for every point
             const pointsMode = []; // Array of booleans: true = driving, false = walking
             for (let i = 0; i < pts.length; i++) {
-                // Determine travel mode (Walk vs Drive) by title prefix for backwards compatibility
-                const isDriveModeByTitle = walk.title.startsWith("Drive on") || walk.title.startsWith("Drive at");
-                const isWalkModeByTitle = walk.title.startsWith("Walk on") || walk.title.startsWith("Walk at");
+        const titleLower = walk.title.toLowerCase();
+        const isDriveModeByTitle = titleLower.startsWith("drive on") || titleLower.startsWith("drive at");
+        const isWalkModeByTitle = titleLower.startsWith("walk on") || titleLower.startsWith("walk at");
                 
                 let isDriving = false;
                 if (isDriveModeByTitle) {
