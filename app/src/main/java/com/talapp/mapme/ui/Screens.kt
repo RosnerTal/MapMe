@@ -1126,13 +1126,19 @@ fun WalkHistoryItem(
         emptyList()
     }
 
-    // Determine travel mode: if more than 50% of segment speed values are >= 7.0 km/h, classify as Drive
-    val drivePointsCount = points.count { it.speed * 3.6f >= 7.0f }
-    val isDrive = points.isNotEmpty() && (drivePointsCount.toDouble() / points.size) > 0.5
+    // Determine travel mode: prioritize title prefix matching, fallback to speed check calculations if not present
+    val isDrive = if (walk.title.startsWith("Drive on", ignoreCase = true) || walk.title.startsWith("Drive at", ignoreCase = true)) {
+        true
+    } else if (walk.title.startsWith("Walk on", ignoreCase = true) || walk.title.startsWith("Walk at", ignoreCase = true)) {
+        false
+    } else {
+        val drivePointsCount = points.count { it.speed * 3.6f >= 7.0f }
+        points.isNotEmpty() && (drivePointsCount.toDouble() / points.size) > 0.5
+    }
 
-    val displayTitle = if (walk.title.startsWith("Walk on") || walk.title.startsWith("Drive on") || walk.title.startsWith("Walk at") || walk.title.startsWith("Drive at")) {
-        val separator = if (walk.title.contains("on ")) "on " else "at "
-        val timeLabel = walk.title.substringAfter(separator)
+    val displayTitle = if (walk.title.startsWith("Walk on", ignoreCase = true) || walk.title.startsWith("Drive on", ignoreCase = true) || walk.title.startsWith("Walk at", ignoreCase = true) || walk.title.startsWith("Drive at", ignoreCase = true)) {
+        val separator = if (walk.title.toLowerCase().contains("on ")) "on " else "at "
+        val timeLabel = walk.title.substring(walk.title.toLowerCase().indexOf(separator) + separator.length)
         if (isDrive) "Drive $separator$timeLabel" else "Walk $separator$timeLabel"
     } else {
         walk.title
