@@ -1572,6 +1572,70 @@ fun RecordScreen(
                             )
                         }
 
+                        // Waze integration quick launch button (Visible when recording a Drive)
+                        if (isDrive) {
+                            val context = androidx.compose.ui.platform.LocalContext.current
+                            IconButtonControl(
+                                onClick = {
+                                    // Start tracking if paused
+                                    if (!isTracking) {
+                                        viewModel.startWalk(true)
+                                    }
+                                    try {
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse("waze://?navigate=yes")
+                                        ).apply {
+                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        // Waze not installed, fallback to play store or display toast
+                                        try {
+                                            val intent = android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse("market://details?id=com.waze")
+                                            )
+                                            context.startActivity(intent)
+                                        } catch (e2: Exception) {}
+                                    }
+                                },
+                                icon = Icons.Default.DirectionsCar,
+                                contentDescription = "Launch Waze",
+                                backgroundColor = Color(0xFF33CCFF) // Waze blue accent
+                            )
+
+                            IconButtonControl(
+                                onClick = {
+                                    // Start tracking if paused
+                                    if (!isTracking) {
+                                        viewModel.startWalk(true)
+                                    }
+                                    try {
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse("google.navigation:mode=d")
+                                        ).apply {
+                                            setPackage("com.google.android.apps.maps")
+                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        try {
+                                            val intent = android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse("market://details?id=com.google.android.apps.maps")
+                                            )
+                                            context.startActivity(intent)
+                                        } catch (e2: Exception) {}
+                                    }
+                                },
+                                icon = Icons.Default.Map,
+                                contentDescription = "Launch Google Maps",
+                                backgroundColor = Color(0xFF34A853) // Google Green accent
+                            )
+                        }
+
                         // 2. Stop Button (Red, only if walk has points or tracking timer has run)
                         IconButtonControl(
                             onClick = {
