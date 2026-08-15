@@ -20,6 +20,7 @@ playServicesAuth = "21.2.0"
 firebaseBom = "33.1.1"
 gson = "2.10.1"
 osmdroid = "6.1.20"
+carApp = "1.7.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -53,6 +54,8 @@ firebase-auth = { module = "com.google.firebase:firebase-auth-ktx" }
 firebase-firestore = { module = "com.google.firebase:firebase-firestore-ktx" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 osmdroid = { module = "org.osmdroid:osmdroid-android", version.ref = "osmdroid" }
+androidx-car-app = { group = "androidx.car.app", name = "app", version.ref = "carApp" }
+androidx-car-app-projected = { group = "androidx.car.app", name = "app-projected", version.ref = "carApp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

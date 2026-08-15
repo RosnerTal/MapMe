@@ -1137,8 +1137,8 @@ fun WalkHistoryItem(
     }
 
     val displayTitle = if (walk.title.startsWith("Walk on", ignoreCase = true) || walk.title.startsWith("Drive on", ignoreCase = true) || walk.title.startsWith("Walk at", ignoreCase = true) || walk.title.startsWith("Drive at", ignoreCase = true)) {
-        val separator = if (walk.title.toLowerCase().contains("on ")) "on " else "at "
-        val timeLabel = walk.title.substring(walk.title.toLowerCase().indexOf(separator) + separator.length)
+        val separator = if (walk.title.lowercase().contains("on ")) "on " else "at "
+        val timeLabel = walk.title.substring(walk.title.lowercase().indexOf(separator) + separator.length)
         if (isDrive) "Drive $separator$timeLabel" else "Walk $separator$timeLabel"
     } else {
         walk.title

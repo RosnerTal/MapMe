@@ -12,8 +12,8 @@ android {
         applicationId = "com.talapp.mapme"
         minSdk = 24
         targetSdk = 36
-        versionCode = 30
-        versionName = "3.0"
+        versionCode = 31
+        versionName = "3.1"
     }
 
     signingConfigs {
@@ -116,4 +116,8 @@ dependencies {
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.auth)
   implementation(libs.firebase.firestore)
+
+  // Android Auto
+  implementation(libs.androidx.car.app)
+  implementation(libs.androidx.car.app.projected)
 }
