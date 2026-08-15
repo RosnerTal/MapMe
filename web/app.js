@@ -391,22 +391,11 @@ function drawWalkRoute(walk, fitBounds = false) {
     
     if (points.length === 0) return;
     
-    // Draw segmented path based on speed (7 km/h = 1.944 m/s threshold)
+    // Build mode information for every point
     const baseWalkColor = '#06b6d4'; // Cyan for selected active walk
     const driveColor = '#ff3b30'; // Coral/Red for driving
-    
-    for (let i = 0; i < points.length - 1; i++) {
-        const pt1 = points[i];
-        const pt2 = points[i + 1];
-        
-        // Smart speed threshold: Compute the average speed of the local window
-        const pointsWindow = [];
-        if (i > 0) pointsWindow.push(points[i - 1]);
-        pointsWindow.push(pt1);
-        pointsWindow.push(pt2);
-        if (i < points.length - 2) pointsWindow.push(points[i + 2]);
-        
-        // Determine travel mode (Walk vs Drive) by title prefix for backwards compatibility
+    const pointsMode = [];
+    for (let i = 0; i < points.length; i++) {
         const isDriveModeByTitle = walk.title.startsWith("Drive on") || walk.title.startsWith("Drive at");
         const isWalkModeByTitle = walk.title.startsWith("Walk on") || walk.title.startsWith("Walk at");
         
@@ -416,19 +405,49 @@ function drawWalkRoute(walk, fitBounds = false) {
         } else if (isWalkModeByTitle) {
             isDriving = false;
         } else {
-            // Fallback to speed threshold calculation if title has no clear mode keyword
+            const pointsWindow = [];
+            const startIdx = Math.max(0, i - 1);
+            const endIdx = Math.min(points.length - 1, i + 2);
+            for (let w = startIdx; w <= endIdx; w++) {
+                pointsWindow.push(points[w]);
+            }
             const avgSpeedKmh = (pointsWindow.reduce((sum, p) => sum + p.speed, 0) / pointsWindow.length) * 3.6;
             isDriving = avgSpeedKmh >= 7.0;
         }
-        
-        // Skip rendering if filtered out
-        if (isDriving && !showDrives) continue;
-        if (!isDriving && !showWalks) continue;
+        pointsMode.push(isDriving);
+    }
 
-        const segmentLatLngs = [[pt1.latitude, pt1.longitude], [pt2.latitude, pt2.longitude]];
+    // Group contiguous points of the same travel mode
+    let currentGroup = [];
+    let currentGroupMode = null;
+
+    for (let i = 0; i < points.length; i++) {
+        const pt = points[i];
+        const ptMode = pointsMode[i];
+
+        if (currentGroup.length === 0) {
+            currentGroup.push([pt.latitude, pt.longitude]);
+            currentGroupMode = ptMode;
+        } else if (ptMode === currentGroupMode) {
+            currentGroup.push([pt.latitude, pt.longitude]);
+        } else {
+            drawActiveContiguousSegment(currentGroup, currentGroupMode);
+            currentGroup = [[points[i - 1].latitude, points[i - 1].longitude], [pt.latitude, pt.longitude]];
+            currentGroupMode = ptMode;
+        }
+    }
+
+    if (currentGroup.length > 1) {
+        drawActiveContiguousSegment(currentGroup, currentGroupMode);
+    }
+
+    function drawActiveContiguousSegment(latlngs, isDriving) {
+        if (isDriving && !showDrives) return;
+        if (!isDriving && !showWalks) return;
+
         const finalColor = isDriving ? driveColor : baseWalkColor;
-        
-        const glow = L.polyline(segmentLatLngs, {
+
+        const glow = L.polyline(latlngs, {
             color: finalColor,
             opacity: 0.25,
             weight: 20,
@@ -436,7 +455,7 @@ function drawWalkRoute(walk, fitBounds = false) {
             lineJoin: 'round'
         }).addTo(map);
         
-        const core = L.polyline(segmentLatLngs, {
+        const core = L.polyline(latlngs, {
             color: finalColor,
             opacity: 0.95,
             weight: 7,
