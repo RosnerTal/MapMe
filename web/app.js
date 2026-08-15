@@ -328,6 +328,9 @@ function loadWalks(uid) {
                 card.addEventListener("click", () => selectWalk(walk, card));
                 walksList.appendChild(card);
             });
+
+            // Dynamically redraw map layers to align with timeframe selection filter
+            redrawAllMapLayers();
         };
 
         // Render initially with selected active timeframe button state (week)
@@ -540,7 +543,15 @@ function redrawAllMapLayers(fitActiveWalk = false) {
     activeMarkerStart = null;
     activeMarkerEnd = null;
 
-    if (currentWalksData.length === 0) return;
+    const activeTimeframeBtn = document.querySelector(".timeframe-btn.active");
+    const activeType = activeTimeframeBtn ? activeTimeframeBtn.id.replace("timeframe-", "").replace("-btn", "") : "week";
+    const cutoffTime = getCutoffTime(activeType);
+    
+    const filteredWalksData = cutoffTime === 0
+        ? currentWalksData
+        : currentWalksData.filter(w => w.startTime >= cutoffTime);
+
+    if (filteredWalksData.length === 0) return;
 
     const allLatLns = [];
 
@@ -550,7 +561,7 @@ function redrawAllMapLayers(fitActiveWalk = false) {
         const parsedWalks = [];
         const segmentCountMap = {};
 
-        currentWalksData.forEach(walk => {
+        filteredWalksData.forEach(walk => {
             let pts = [];
             try {
                 pts = JSON.parse(walk.pointsJson);
