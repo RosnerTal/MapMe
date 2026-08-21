@@ -12,8 +12,8 @@ android {
         applicationId = "com.talapp.mapme"
         minSdk = 24
         targetSdk = 36
-        versionCode = 32
-        versionName = "3.2"
+        versionCode = 35
+        versionName = "3.5"
     }
 
     signingConfigs {
@@ -39,7 +39,7 @@ android {
     buildFeatures {
       compose = true
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
     }
 

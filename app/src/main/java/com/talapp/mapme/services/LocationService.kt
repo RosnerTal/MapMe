@@ -34,9 +34,15 @@ class LocationService : Service() {
     private var locationCallback: LocationCallback? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Live Walk Tracking State
+    // Live Walk/Drive Tracking State
     private val _isTracking = MutableStateFlow(false)
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
+
+    private val _isTrackingDrive = MutableStateFlow(false)
+    val isTrackingDrive: StateFlow<Boolean> = _isTrackingDrive.asStateFlow()
+
+    private val _currentSpeedKmh = MutableStateFlow(0f)
+    val currentSpeedKmh: StateFlow<Float> = _currentSpeedKmh.asStateFlow()
 
     private val _currentPoints = MutableStateFlow<List<WalkPoint>>(emptyList())
     val currentPoints: StateFlow<List<WalkPoint>> = _currentPoints.asStateFlow()
@@ -77,12 +83,11 @@ class LocationService : Service() {
         createNotificationChannel()
     }
 
-    private var isTrackingDrive = false
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                isTrackingDrive = intent.getBooleanExtra("EXTRA_IS_DRIVE", false)
+                val isDrive = intent.getBooleanExtra("EXTRA_IS_DRIVE", false)
+                _isTrackingDrive.value = isDrive
                 startTracking()
             }
             ACTION_PAUSE -> pauseTracking()
@@ -149,6 +154,9 @@ class LocationService : Service() {
     }
 
     private fun processLocationUpdate(location: Location) {
+        val speedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
+        _currentSpeedKmh.value = speedKmh
+
         val newPoint = WalkPoint(
             latitude = location.latitude,
             longitude = location.longitude,
@@ -187,6 +195,7 @@ class LocationService : Service() {
     private fun pauseTracking() {
         if (!_isTracking.value) return
         _isTracking.value = false
+        _currentSpeedKmh.value = 0f
         pausedTimeSeconds = _elapsedTimeSeconds.value
         timerJob?.cancel()
         
@@ -208,7 +217,10 @@ class LocationService : Service() {
     }
 
     private fun stopTracking() {
+        val wasDrive = _isTrackingDrive.value
         _isTracking.value = false
+        _currentSpeedKmh.value = 0f
+        _isTrackingDrive.value = false
         timerJob?.cancel()
         locationCallback?.let {
             fusedLocationClient.removeLocationUpdates(it)
@@ -220,7 +232,7 @@ class LocationService : Service() {
                 val db = WalkDatabase.getDatabase(applicationContext)
                 val dateStr = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date())
                 val timeStr = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date())
-                val prefix = if (isTrackingDrive) "Drive" else "Walk"
+                val prefix = if (wasDrive) "Drive" else "Walk"
                 val title = "$prefix on $dateStr ($timeStr)"
                 val walk = Walk(
                     title = title,
@@ -240,6 +252,8 @@ class LocationService : Service() {
                 _activePois.value = emptyList()
                 _totalDistanceMeters.value = 0.0
                 _elapsedTimeSeconds.value = 0L
+                _currentSpeedKmh.value = 0f
+                _isTrackingDrive.value = false
                 pausedTimeSeconds = 0L
                 startTimeMillis = 0L
 

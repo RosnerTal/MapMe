@@ -653,9 +653,10 @@ fun DashboardScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(top = 48.dp, bottom = 100.dp)
+            contentPadding = PaddingValues(top = 16.dp, bottom = 200.dp)
         ) {
             // Elegant Header
             item {
@@ -665,12 +666,29 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text(
-                            text = "MapMe",
-                            color = Color.White,
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "MapMe",
+                                color = Color.White,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(NeonCyan.copy(alpha = 0.15f))
+                                    .border(1.dp, NeonCyan.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "v${com.talapp.mapme.BuildConfig.VERSION_NAME}",
+                                    color = NeonCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                         Text(
                             text = "Color every street in your city",
                             color = TextGray,
@@ -932,9 +950,9 @@ fun DashboardScreen(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 24.dp)
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .navigationBarsPadding()
+                .padding(bottom = 16.dp, start = 20.dp, end = 20.dp)
+                .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -1283,146 +1301,211 @@ fun RecordScreen(
             isDriveRecording = isDrive
         )
 
-        // Floating Back Button (Glassmorphic)
-        Box(
+        // Top Floating Control Bar: Back Button + Stats HUD + Map Style Toggle (Row layout - NO overlaps!)
+        Row(
             modifier = Modifier
+                .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(top = 16.dp, start = 16.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(GlassBackground)
-                .border(1.dp, GlassBorder, CircleShape)
-                .clickable { onBackClick() },
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.ArrowBack,
-                contentDescription = "Back",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-
-        // Floating Map Style Toggle Button (Glassmorphic)
-        Box(
-            modifier = Modifier
-                .statusBarsPadding()
-                .padding(top = 16.dp, end = 16.dp)
-                .align(Alignment.TopEnd)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(GlassBackground)
-                .border(1.dp, GlassBorder, CircleShape)
-                .clickable { viewModel.toggleMapStyle() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
-                contentDescription = "Toggle Map Style",
-                tint = if (isDarkMap) NeonCyan else ElectricViolet,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-
-        // Floating Speed Filters Panel (Glassmorphic)
-        Card(
-            modifier = Modifier
-                .statusBarsPadding()
-                .padding(top = 76.dp, end = 16.dp)
-                .align(Alignment.TopEnd)
-                .width(130.dp),
-            colors = CardDefaults.cardColors(containerColor = GlassBackground),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, GlassBorder)
-        ) {
-            Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "FILTERS",
-                    color = TextGray,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-                
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.clickable { viewModel.toggleShowWalks() }
-                ) {
-                    Checkbox(
-                        checked = showWalks,
-                        onCheckedChange = { viewModel.toggleShowWalks() },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = NeonCyan,
-                            uncheckedColor = TextGray,
-                            checkmarkColor = Color.Black
-                        ),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text("Walks (<7)", color = Color.White, fontSize = 11.sp)
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.clickable { viewModel.toggleShowDrives() }
-                ) {
-                    Checkbox(
-                        checked = showDrives,
-                        onCheckedChange = { viewModel.toggleShowDrives() },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = Color(0xFFEF4444),
-                            uncheckedColor = TextGray,
-                            checkmarkColor = Color.White
-                        ),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text("Drives (7+)", color = Color.White, fontSize = 11.sp)
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.clickable { viewModel.toggleShowPois() }
-                ) {
-                    Checkbox(
-                        checked = showPois,
-                        onCheckedChange = { viewModel.toggleShowPois() },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = ElectricViolet,
-                            uncheckedColor = TextGray,
-                            checkmarkColor = Color.White
-                        ),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text("POIs (Markers)", color = Color.White, fontSize = 11.sp)
-                }
-            }
-        }
-
-        // Floating Add POI Button (Glassmorphic, visible when tracking has points)
-        if (isTracking && points.isNotEmpty()) {
+            // Floating Back Button
             Box(
                 modifier = Modifier
-                    .statusBarsPadding()
-                    .padding(top = 186.dp, end = 16.dp)
-                    .align(Alignment.TopEnd)
                     .size(44.dp)
                     .clip(CircleShape)
                     .background(GlassBackground)
                     .border(1.dp, GlassBorder, CircleShape)
-                    .clickable { showAddPoiDialog = true },
+                    .clickable { onBackClick() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.AddLocation,
-                    contentDescription = "Add Point of Interest",
-                    tint = NeonCyan,
-                    modifier = Modifier.size(22.dp)
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
                 )
+            }
+
+            // Glassmorphic Stats Overlay (Center HUD)
+            Card(
+                modifier = Modifier.weight(1f),
+                colors = CardDefaults.cardColors(containerColor = GlassBackground),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, GlassBorder)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Duration
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("DURATION", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = formatTime(durationSeconds * 1000),
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Divider
+                    Box(modifier = Modifier.width(1.dp).height(20.dp).background(GlassBorder))
+
+                    // Distance
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("DISTANCE", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = formatDistance(distance),
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Divider
+                    Box(modifier = Modifier.width(1.dp).height(20.dp).background(GlassBorder))
+
+                    // Speed
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("SPEED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                        val speed = currentLoc?.speed ?: 0f
+                        Text(
+                            text = formatSpeed(speed),
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Floating Map Style Toggle Button
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(GlassBackground)
+                    .border(1.dp, GlassBorder, CircleShape)
+                    .clickable { viewModel.toggleMapStyle() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
+                    contentDescription = "Toggle Map Style",
+                    tint = if (isDarkMap) NeonCyan else ElectricViolet,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        // Floating Controls on Right Side (Filters Panel + Add POI Button in a vertical column, neatly spaced)
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(top = 68.dp, end = 16.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Speed Filters Panel
+            Card(
+                modifier = Modifier.width(136.dp),
+                colors = CardDefaults.cardColors(containerColor = GlassBackground),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, GlassBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "FILTERS",
+                        color = TextGray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.clickable { viewModel.toggleShowWalks() }
+                    ) {
+                        Checkbox(
+                            checked = showWalks,
+                            onCheckedChange = { viewModel.toggleShowWalks() },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = NeonCyan,
+                                uncheckedColor = TextGray,
+                                checkmarkColor = Color.Black
+                            ),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("Walks (<7)", color = Color.White, fontSize = 11.sp)
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.clickable { viewModel.toggleShowDrives() }
+                    ) {
+                        Checkbox(
+                            checked = showDrives,
+                            onCheckedChange = { viewModel.toggleShowDrives() },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = Color(0xFFEF4444),
+                                uncheckedColor = TextGray,
+                                checkmarkColor = Color.White
+                            ),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("Drives (7+)", color = Color.White, fontSize = 11.sp)
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.clickable { viewModel.toggleShowPois() }
+                    ) {
+                        Checkbox(
+                            checked = showPois,
+                            onCheckedChange = { viewModel.toggleShowPois() },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = ElectricViolet,
+                                uncheckedColor = TextGray,
+                                checkmarkColor = Color.White
+                            ),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("POIs (Markers)", color = Color.White, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            // Floating Add POI Button (placed below filters, NEVER overlapping!)
+            if (isTracking && points.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(GlassBackground)
+                        .border(1.dp, GlassBorder, CircleShape)
+                        .clickable { showAddPoiDialog = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AddLocation,
+                        contentDescription = "Add Point of Interest",
+                        tint = NeonCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
@@ -1441,66 +1524,6 @@ fun RecordScreen(
             onDismiss = { selectedPoi = null }
         )
 
-        // Glassmorphic Stats Overlay (Top Center)
-        Card(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 16.dp)
-                .widthIn(max = 320.dp),
-            colors = CardDefaults.cardColors(containerColor = GlassBackground),
-            shape = RoundedCornerShape(20.dp),
-            border = BorderStroke(1.dp, GlassBorder)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Time
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("DURATION", color = TextGray, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        text = formatTime(durationSeconds * 1000),
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                
-                // Divider
-                Box(modifier = Modifier.width(1.dp).height(24.dp).background(GlassBorder))
-
-                // Distance
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("DISTANCE", color = TextGray, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        text = formatDistance(distance),
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Divider
-                Box(modifier = Modifier.width(1.dp).height(24.dp).background(GlassBorder))
-
-                // Speed
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("SPEED", color = TextGray, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                    val speed = currentLoc?.speed ?: 0f
-                    Text(
-                        text = formatSpeed(speed),
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-
         // Controls overlay card (Bottom Center)
         AnimatedVisibility(
             visible = selectedPoi == null,
@@ -1509,7 +1532,7 @@ fun RecordScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 24.dp, start = 20.dp, end = 20.dp)
+                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
                 .fillMaxWidth()
         ) {
             Card(
@@ -1758,136 +1781,138 @@ fun DetailScreen(
                 onPoiClick = { selectedPoi = it }
             )
 
-            // Back Button (Glassmorphic)
-            Box(
-                modifier = Modifier
-                    .statusBarsPadding()
-                    .padding(top = 16.dp, start = 16.dp)
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(GlassBackground)
-                    .border(1.dp, GlassBorder, CircleShape)
-                    .clickable { onBackClick() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // Floating Map Style Toggle Button (Glassmorphic)
-            Box(
-                modifier = Modifier
-                    .statusBarsPadding()
-                    .padding(top = 16.dp, end = 16.dp)
-                    .align(Alignment.TopEnd)
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(GlassBackground)
-                    .border(1.dp, GlassBorder, CircleShape)
-                    .clickable { viewModel.toggleMapStyle() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
-                    contentDescription = "Toggle Map Style",
-                    tint = if (isDarkMap) NeonCyan else ElectricViolet,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-
-            // Stats info overlay (Top Center)
-            Card(
+            // Top Floating Control Bar: Back Button + Trip Summary Card + Map Style Toggle (Row layout - NO overlaps!)
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
-                    .padding(top = 16.dp, start = 20.dp, end = 20.dp)
-                    .fillMaxWidth(0.9f),
-                colors = CardDefaults.cardColors(containerColor = GlassBackground),
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, GlassBorder)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
+                // Back Button
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(GlassBackground)
+                        .border(1.dp, GlassBorder, CircleShape)
+                        .clickable { onBackClick() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Stats info overlay (Center Card)
+                Card(
+                    modifier = Modifier.weight(1f),
+                    colors = CardDefaults.cardColors(containerColor = GlassBackground),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, GlassBorder)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Text(
-                            text = currentWalk.title,
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = {
-                                if (isPlaybackPlaying) {
-                                    isPlaybackPlaying = false
-                                    playbackIndex = null
-                                } else {
-                                    playbackIndex = 0
-                                    isPlaybackPlaying = true
-                                }
-                            },
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(NeonCyan.copy(alpha = 0.15f), CircleShape)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = if (isPlaybackPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "Simulate Route Playback",
-                                tint = NeonCyan,
-                                modifier = Modifier.size(18.dp)
+                            Text(
+                                text = currentWalk.title,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = {
+                                    if (isPlaybackPlaying) {
+                                        isPlaybackPlaying = false
+                                        playbackIndex = null
+                                    } else {
+                                        playbackIndex = 0
+                                        isPlaybackPlaying = true
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .background(NeonCyan.copy(alpha = 0.15f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaybackPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Simulate Route Playback",
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("DISTANCE", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    text = formatDistance(currentWalk.totalDistanceMeters),
+                                    color = NeonCyan,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Column {
+                                Text("DURATION", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    text = formatTime(currentWalk.totalDurationMillis),
+                                    color = ElectricViolet,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Column {
+                                Text("AVG SPEED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                                val durationSec = currentWalk.totalDurationMillis / 1000f
+                                val avgMps = if (durationSec > 0) (currentWalk.totalDistanceMeters / durationSec).toFloat() else 0f
+                                Text(
+                                    text = formatSpeed(avgMps),
+                                    color = EmeraldGreen,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("DISTANCE", color = TextGray, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                text = formatDistance(currentWalk.totalDistanceMeters),
-                                color = NeonCyan,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Column {
-                            Text("DURATION", color = TextGray, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                text = formatTime(currentWalk.totalDurationMillis),
-                                color = ElectricViolet,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Column {
-                            Text("AVG SPEED", color = TextGray, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-                            val durationSec = currentWalk.totalDurationMillis / 1000f
-                            val avgMps = if (durationSec > 0) (currentWalk.totalDistanceMeters / durationSec).toFloat() else 0f
-                            Text(
-                                text = formatSpeed(avgMps),
-                                color = EmeraldGreen,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                }
+
+                // Floating Map Style Toggle Button
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(GlassBackground)
+                        .border(1.dp, GlassBorder, CircleShape)
+                        .clickable { viewModel.toggleMapStyle() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
+                        contentDescription = "Toggle Map Style",
+                        tint = if (isDarkMap) NeonCyan else ElectricViolet,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
 
@@ -1899,7 +1924,7 @@ fun DetailScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 32.dp)
+                    .padding(bottom = 16.dp)
             ) {
                 Button(
                     onClick = {
@@ -1994,6 +2019,15 @@ fun LoginScreen(
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "v${com.talapp.mapme.BuildConfig.VERSION_NAME}",
+                    color = NeonCyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2115,54 +2149,86 @@ fun AllWalksMapScreen(
             onPoiClick = { selectedPoi = it }
         )
 
-        // Floating Back Button (Glassmorphic)
-        Box(
+        // Top Floating Control Bar: Back Button + Title Chip + Map Style Toggle (Row layout - NO overlaps!)
+        Row(
             modifier = Modifier
+                .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(top = 16.dp, start = 16.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(GlassBackground)
-                .border(1.dp, GlassBorder, CircleShape)
-                .clickable { onBackClick() },
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.ArrowBack,
-                contentDescription = "Back",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
-            )
+            // Back Button
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(GlassBackground)
+                    .border(1.dp, GlassBorder, CircleShape)
+                    .clickable { onBackClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // Centered Title Chip
+            Card(
+                colors = CardDefaults.cardColors(containerColor = GlassBackground),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, GlassBorder)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Map,
+                        contentDescription = null,
+                        tint = NeonCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Combined Map Explorer",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Map Style Toggle Button
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(GlassBackground)
+                    .border(1.dp, GlassBorder, CircleShape)
+                    .clickable { viewModel.toggleMapStyle() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
+                    contentDescription = "Toggle Map Style",
+                    tint = if (isDarkMap) NeonCyan else ElectricViolet,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
-        // Floating Map Style Toggle Button (Glassmorphic)
-        Box(
-            modifier = Modifier
-                .statusBarsPadding()
-                .padding(top = 16.dp, end = 16.dp)
-                .align(Alignment.TopEnd)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(GlassBackground)
-                .border(1.dp, GlassBorder, CircleShape)
-                .clickable { viewModel.toggleMapStyle() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
-                contentDescription = "Toggle Map Style",
-                tint = if (isDarkMap) NeonCyan else ElectricViolet,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-
-        // Floating Speed Filters Panel (Glassmorphic)
+        // Floating Speed Filters Panel (Glassmorphic, below top bar)
         Card(
             modifier = Modifier
                 .statusBarsPadding()
-                .padding(top = 76.dp, end = 16.dp)
+                .padding(top = 68.dp, end = 16.dp)
                 .align(Alignment.TopEnd)
-                .width(130.dp),
+                .width(136.dp),
             colors = CardDefaults.cardColors(containerColor = GlassBackground),
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, GlassBorder)
@@ -2243,7 +2309,7 @@ fun AllWalksMapScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 24.dp, start = 20.dp, end = 20.dp)
+                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
                 .fillMaxWidth()
         ) {
             Card(
