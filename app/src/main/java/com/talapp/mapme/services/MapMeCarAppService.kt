@@ -28,6 +28,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.talapp.mapme.data.Walk
 import com.talapp.mapme.data.WalkDatabase
+import com.talapp.mapme.data.WalkPoint
 import com.talapp.mapme.data.WalkPoi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,13 +54,15 @@ class MapMeCarAppService : CarAppService() {
 }
 
 /**
- * Session managing connection to LocationService and lifecycle-aware state invalidation.
+ * Session managing connection to LocationService, map surface renderer, and lifecycle-aware state invalidation.
  */
 class MapMeCarSession : Session(), DefaultLifecycleObserver {
     private var locationService: LocationService? = null
     private var isBound = false
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var observeJob: Job? = null
+    var mapSurfaceRenderer: CarMapSurfaceRenderer? = null
+        private set
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -80,10 +83,21 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
     val totalDistanceMeters: Double get() = locationService?.totalDistanceMeters?.value ?: 0.0
     val currentSpeedKmh: Float get() = locationService?.currentSpeedKmh?.value ?: 0f
     val activePois: List<WalkPoi> get() = locationService?.activePois?.value ?: emptyList()
+    val currentPoints: List<WalkPoint> get() = locationService?.currentPoints?.value ?: emptyList()
 
     override fun onCreateScreen(intent: Intent): Screen {
         lifecycle.addObserver(this)
         bindLocationService()
+
+        // Register the live Map Surface Renderer on the vehicle's Android Auto screen
+        val renderer = CarMapSurfaceRenderer(carContext, this)
+        mapSurfaceRenderer = renderer
+        try {
+            carContext.getCarService(androidx.car.app.AppManager::class.java).setSurfaceCallback(renderer)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         return MapMeCarMainScreen(carContext, this)
     }
 
@@ -120,12 +134,14 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
                     svc.totalDistanceMeters,
                     svc.currentSpeedKmh,
                     svc.activePois,
-                    svc.isTrackingDrive
+                    svc.isTrackingDrive,
+                    svc.currentPoints
                 )
             ) { _ -> Unit }
                 .collect {
                     try {
                         carContext.getCarService(ScreenManager::class.java).top.invalidate()
+                        mapSurfaceRenderer?.requestRender()
                     } catch (_: Exception) {}
                 }
         }
@@ -172,6 +188,7 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
     fun addPoi(tag: String) {
         locationService?.addPoi(tag, null)
+        mapSurfaceRenderer?.requestRender()
     }
 }
 
@@ -188,28 +205,7 @@ class MapMeCarMainScreen(
             buildTemplate()
         } catch (e: Exception) {
             e.printStackTrace()
-            val pane = Pane.Builder()
-                .addRow(
-                    Row.Builder()
-                        .setTitle("MapMe Drive Hub")
-                        .addText("Ready to track. Tap below to start.")
-                        .build()
-                )
-                .addAction(
-                    Action.Builder()
-                        .setTitle("🚗 Start Drive")
-                        .setOnClickListener {
-                            session.startTracking(isDrive = true)
-                            invalidate()
-                        }
-                        .build()
-                )
-                .build()
-
-            @Suppress("DEPRECATION")
-            PaneTemplate.Builder(pane)
-                .setHeader(Header.Builder().setTitle("MapMe").build())
-                .build()
+            buildSafeFallback()
         }
     }
 
@@ -227,9 +223,8 @@ class MapMeCarMainScreen(
 
             paneBuilder.addRow(
                 Row.Builder()
-                    .setTitle("⏱️ Duration: ${formatDuration(duration)}")
-                    .addText("📏 Distance: ${formatDistance(distance)}  •  ⚡ Speed: ${String.format("%.1f", speed)} km/h")
-                    .addText("📍 Waypoints: $poisCount saved")
+                    .setTitle("⏱️ ${formatDuration(duration)}  •  📏 ${formatDistance(distance)}")
+                    .addText("⚡ ${String.format(java.util.Locale.US, "%.1f km/h", speed)}  •  📍 $poisCount waypoints")
                     .build()
             )
 
@@ -255,33 +250,20 @@ class MapMeCarMainScreen(
                     .build()
             )
 
-            val actionStrip = ActionStrip.Builder()
-                .addAction(
+            val header = Header.Builder()
+                .setTitle(modeTitle)
+                .addEndHeaderAction(
                     Action.Builder()
-                        .setTitle("📍 Mark POI")
+                        .setTitle("📍 POI")
                         .setOnClickListener {
                             screenManager.push(CarMarkPoiScreen(carContext, session))
                         }
                         .build()
                 )
-                .addAction(
-                    Action.Builder()
-                        .setTitle("📜 History")
-                        .setOnClickListener {
-                            screenManager.push(CarTripListScreen(carContext, session))
-                        }
-                        .build()
-                )
                 .build()
 
-            val header = Header.Builder()
-                .setTitle(modeTitle)
-                .build()
-
-            @Suppress("DEPRECATION")
             PaneTemplate.Builder(paneBuilder.build())
                 .setHeader(header)
-                .setActionStrip(actionStrip)
                 .build()
         } else {
             // Idle / Ready state
@@ -289,18 +271,8 @@ class MapMeCarMainScreen(
 
             paneBuilder.addRow(
                 Row.Builder()
-                    .setTitle("Ready to Track")
-                    .addText("Tap an activity below to start GPS recording on your car screen.")
-                    .build()
-            )
-
-            paneBuilder.addRow(
-                Row.Builder()
-                    .setTitle("📜 Trip History & Logs")
-                    .addText("View completed trips and recorded waypoints.")
-                    .setOnClickListener {
-                        screenManager.push(CarTripListScreen(carContext, session))
-                    }
+                    .setTitle("Live Map Active")
+                    .addText("Tap 'Start Drive' below to begin recording your route on this map.")
                     .build()
             )
 
@@ -309,7 +281,7 @@ class MapMeCarMainScreen(
                     .setTitle("🚗 Start Drive")
                     .setOnClickListener {
                         session.startTracking(isDrive = true)
-                        CarToast.makeText(carContext, "Drive tracking started!", CarToast.LENGTH_SHORT).show()
+                        CarToast.makeText(carContext, "🚗 Drive tracking started!", CarToast.LENGTH_SHORT).show()
                         invalidate()
                     }
                     .build()
@@ -320,14 +292,15 @@ class MapMeCarMainScreen(
                     .setTitle("🚶 Start Walk")
                     .setOnClickListener {
                         session.startTracking(isDrive = false)
-                        CarToast.makeText(carContext, "Walk tracking started!", CarToast.LENGTH_SHORT).show()
+                        CarToast.makeText(carContext, "🚶 Walk tracking started!", CarToast.LENGTH_SHORT).show()
                         invalidate()
                     }
                     .build()
             )
 
-            val actionStrip = ActionStrip.Builder()
-                .addAction(
+            val header = Header.Builder()
+                .setTitle("MapMe v${com.talapp.mapme.BuildConfig.VERSION_NAME}")
+                .addEndHeaderAction(
                     Action.Builder()
                         .setTitle("📜 History")
                         .setOnClickListener {
@@ -337,16 +310,34 @@ class MapMeCarMainScreen(
                 )
                 .build()
 
-            val header = Header.Builder()
-                .setTitle("MapMe v${com.talapp.mapme.BuildConfig.VERSION_NAME}")
-                .build()
-
-            @Suppress("DEPRECATION")
             PaneTemplate.Builder(paneBuilder.build())
                 .setHeader(header)
-                .setActionStrip(actionStrip)
                 .build()
         }
+    }
+
+    private fun buildSafeFallback(): Template {
+        val pane = Pane.Builder()
+            .addRow(
+                Row.Builder()
+                    .setTitle("MapMe Hub")
+                    .addText("Live Map Active")
+                    .build()
+            )
+            .addAction(
+                Action.Builder()
+                    .setTitle("🚗 Start Drive")
+                    .setOnClickListener {
+                        session.startTracking(isDrive = true)
+                        invalidate()
+                    }
+                    .build()
+            )
+            .build()
+
+        return PaneTemplate.Builder(pane)
+            .setHeader(Header.Builder().setTitle("MapMe").build())
+            .build()
     }
 }
 

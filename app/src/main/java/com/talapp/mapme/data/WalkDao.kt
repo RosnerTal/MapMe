@@ -21,6 +21,9 @@ interface WalkDao {
     @Query("SELECT * FROM walks ORDER BY startTime DESC")
     fun getAllWalks(): Flow<List<Walk>>
 
+    @Query("SELECT * FROM walks ORDER BY startTime DESC")
+    suspend fun getAllWalksList(): List<Walk>
+
     @Query("SELECT * FROM walks WHERE id = :id LIMIT 1")
     suspend fun getWalkById(id: Long): Walk?
 
