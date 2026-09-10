@@ -1,4 +1,4 @@
-﻿package com.talapp.mapme.data
+package com.talapp.mapme.data
 
 import kotlin.math.*
 
@@ -17,8 +17,9 @@ data class ConsolidatedPolyline(
  * without altering or deleting any raw database records.
  */
 object RouteConsolidator {
-    private const val CELL_SIZE = 0.0005 // ~50 meters spatial grid
-    const val DEFAULT_THRESHOLD_METERS = 22.0
+    private const val CELL_SIZE = 0.001 // ~100 meters spatial grid
+    const val DEFAULT_CORRIDOR_METERS = 35.0
+    const val DEFAULT_OVERLAP_THRESHOLD = 0.75
 
     private class Segment(
         val lat1: Double,
@@ -67,59 +68,70 @@ object RouteConsolidator {
     /**
      * Consolidate a list of parsed walks into clean non-redundant polylines.
      * Walks and Drives are processed independently so they never merge together.
+     * All output polylines are full continuous lines (never chopped into dots).
      */
     fun consolidate(
         routes: List<Triple<Walk, List<WalkPoint>, Boolean>>,
-        thresholdMeters: Double = DEFAULT_THRESHOLD_METERS
+        overlapThreshold: Double = DEFAULT_OVERLAP_THRESHOLD,
+        corridorMeters: Double = DEFAULT_CORRIDOR_METERS
     ): List<ConsolidatedPolyline> {
         val driveRoutes = routes.filter { it.third }
         val walkRoutes = routes.filter { !it.third }
 
         val result = mutableListOf<ConsolidatedPolyline>()
-        result.addAll(consolidateGroup(driveRoutes, isDrive = true, thresholdMeters))
-        result.addAll(consolidateGroup(walkRoutes, isDrive = false, thresholdMeters))
+        result.addAll(consolidateGroup(driveRoutes, isDrive = true, overlapThreshold, corridorMeters))
+        result.addAll(consolidateGroup(walkRoutes, isDrive = false, overlapThreshold, corridorMeters))
         return result
     }
 
     private fun consolidateGroup(
         routes: List<Triple<Walk, List<WalkPoint>, Boolean>>,
         isDrive: Boolean,
-        thresholdMeters: Double
+        overlapThreshold: Double,
+        corridorMeters: Double
     ): List<ConsolidatedPolyline> {
+        // Sort routes by number of points descending so the longest/most complete routes become the baseline representatives
+        val validRoutes = routes.filter { it.second.size >= 2 }.sortedByDescending { it.second.size }
         val index = SpatialIndex()
         val polylines = mutableListOf<ConsolidatedPolyline>()
 
-        for ((walk, pts, _) in routes) {
-            if (pts.size < 2) continue
+        for ((walk, pts, _) in validRoutes) {
+            if (polylines.isEmpty()) {
+                // First route is always accepted as a primary representative
+                polylines.add(ConsolidatedPolyline(pts, isDrive, walk))
+                for (i in 0 until pts.size - 1) {
+                    index.insert(Segment(pts[i].latitude, pts[i].longitude, pts[i + 1].latitude, pts[i + 1].longitude))
+                }
+                continue
+            }
 
-            var currentSegmentList = mutableListOf<WalkPoint>()
+            // Check how much of pts is covered by already-accepted routes
+            val sampleStep = (pts.size / 100).coerceAtLeast(1)
+            var totalSamples = 0
+            var coveredSamples = 0
 
-            for (i in 0 until pts.size - 1) {
-                val p1 = pts[i]
-                val p2 = pts[i + 1]
-                val midLat = (p1.latitude + p2.latitude) / 2.0
-                val midLon = (p1.longitude + p2.longitude) / 2.0
-
-                val isCovered = index.isPointNearAny(midLat, midLon, thresholdMeters)
-
-                if (!isCovered) {
-                    val seg = Segment(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
-                    index.insert(seg)
-
-                    if (currentSegmentList.isEmpty()) {
-                        currentSegmentList.add(p1)
-                    }
-                    currentSegmentList.add(p2)
-                } else {
-                    if (currentSegmentList.size >= 2) {
-                        polylines.add(ConsolidatedPolyline(currentSegmentList, isDrive, walk))
-                    }
-                    currentSegmentList = mutableListOf()
+            for (i in pts.indices step sampleStep) {
+                val pt = pts[i]
+                totalSamples++
+                if (index.isPointNearAny(pt.latitude, pt.longitude, corridorMeters)) {
+                    coveredSamples++
                 }
             }
 
-            if (currentSegmentList.size >= 2) {
-                polylines.add(ConsolidatedPolyline(currentSegmentList, isDrive, walk))
+            val coverageRatio = if (totalSamples > 0) coveredSamples.toDouble() / totalSamples else 0.0
+
+            // If this route is largely covered by existing displayed routes (>= overlapThreshold),
+            // it is a "close route" along the same location/corridor. Suppress it in the background view
+            // to show only one clean route instead of overlapping duplicates.
+            if (coverageRatio >= overlapThreshold) {
+                continue
+            }
+
+            // This route introduces a distinct path or new location!
+            // Add the FULL, UNCUT, CONTINUOUS polyline so it renders as a smooth line, never dots.
+            polylines.add(ConsolidatedPolyline(pts, isDrive, walk))
+            for (i in 0 until pts.size - 1) {
+                index.insert(Segment(pts[i].latitude, pts[i].longitude, pts[i + 1].latitude, pts[i + 1].longitude))
             }
         }
 

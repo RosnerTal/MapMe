@@ -517,8 +517,9 @@ function drawWalkRoute(walk, fitBounds = false) {
 // Spatial Corridor Deduplication Engine (Display-Only)
 // Merges close/repeated routes into a single clean line without altering any raw database records.
 // ----------------------------------------------------
-const ROUTE_CELL_SIZE = 0.0005; // ~50 meters spatial grid
-const ROUTE_CONSOLIDATION_THRESHOLD_METERS = 22.0; // Corridor width (e.g. dual lane road / GPS drift)
+const ROUTE_CELL_SIZE = 0.001; // ~100 meters spatial grid
+const ROUTE_CONSOLIDATION_THRESHOLD_METERS = 35.0; // 35 meters corridor
+const ROUTE_OVERLAP_THRESHOLD = 0.75; // 75% overlap threshold for close routes
 
 function pointToSegmentDistanceMeters(latP, lonP, latA, lonA, latB, lonB) {
     const latMid = (latA + latB) / 2.0;
@@ -657,48 +658,55 @@ function consolidateRoutes(routes, thresholdMeters = ROUTE_CONSOLIDATION_THRESHO
     return polylines;
 }
 
-function consolidateGroup(routes, isDriving, thresholdMeters, outPolylines) {
+function consolidateGroup(routes, isDriving, thresholdMeters = ROUTE_CONSOLIDATION_THRESHOLD_METERS, outPolylines) {
+    const validRoutes = routes.filter(r => r.points && r.points.length >= 2);
+    validRoutes.sort((a, b) => b.points.length - a.points.length);
+
     const index = new SpatialRouteIndex();
 
-    for (const route of routes) {
+    for (const route of validRoutes) {
         const pts = route.points;
-        if (pts.length < 2) continue;
-
-        let currentSegment = [];
-
-        for (let i = 0; i < pts.length - 1; i++) {
-            const p1 = pts[i];
-            const p2 = pts[i + 1];
-            const midLat = (p1.latitude + p2.latitude) / 2.0;
-            const midLon = (p1.longitude + p2.longitude) / 2.0;
-
-            const isCovered = index.isPointNearAny(midLat, midLon, thresholdMeters);
-
-            if (!isCovered) {
-                index.insert(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
-
-                if (currentSegment.length === 0) {
-                    currentSegment.push([p1.latitude, p1.longitude]);
-                }
-                currentSegment.push([p2.latitude, p2.longitude]);
-            } else {
-                if (currentSegment.length >= 2) {
-                    outPolylines.push({
-                        latlngs: currentSegment,
-                        isDriving: isDriving,
-                        walk: route.walk
-                    });
-                }
-                currentSegment = [];
-            }
-        }
-
-        if (currentSegment.length >= 2) {
+        if (outPolylines.length === 0) {
+            // First representative route is always added in full
             outPolylines.push({
-                latlngs: currentSegment,
+                latlngs: pts.map(p => [p.latitude, p.longitude]),
                 isDriving: isDriving,
                 walk: route.walk
             });
+            for (let i = 0; i < pts.length - 1; i++) {
+                index.insert(pts[i].latitude, pts[i].longitude, pts[i + 1].latitude, pts[i + 1].longitude);
+            }
+            continue;
+        }
+
+        const sampleStep = Math.max(1, Math.floor(pts.length / 100));
+        let totalSamples = 0;
+        let coveredSamples = 0;
+
+        for (let i = 0; i < pts.length; i += sampleStep) {
+            totalSamples++;
+            if (index.isPointNearAny(pts[i].latitude, pts[i].longitude, thresholdMeters)) {
+                coveredSamples++;
+            }
+        }
+
+        const coverageRatio = totalSamples > 0 ? coveredSamples / totalSamples : 0;
+
+        // If route is largely covered by existing displayed routes (>= 75%),
+        // it is a close route on the same location: consolidate it into the existing line.
+        if (coverageRatio >= ROUTE_OVERLAP_THRESHOLD) {
+            continue;
+        }
+
+        // Distinct route or new location: add as an unbroken continuous polyline (never dots)
+        outPolylines.push({
+            latlngs: pts.map(p => [p.latitude, p.longitude]),
+            isDriving: isDriving,
+            walk: route.walk
+        });
+
+        for (let i = 0; i < pts.length - 1; i++) {
+            index.insert(pts[i].latitude, pts[i].longitude, pts[i + 1].latitude, pts[i + 1].longitude);
         }
     }
 }
