@@ -1,11 +1,13 @@
-package com.talapp.mapme.services
+﻿package com.talapp.mapme.services
 
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
@@ -14,6 +16,7 @@ import androidx.car.app.ScreenManager
 import androidx.car.app.Session
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
+import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Header
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
@@ -21,11 +24,20 @@ import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
+import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.validation.HostValidator
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.talapp.mapme.R
 import com.talapp.mapme.data.Walk
 import com.talapp.mapme.data.WalkDatabase
 import com.talapp.mapme.data.WalkPoint
@@ -44,7 +56,6 @@ import kotlinx.coroutines.withContext
  */
 class MapMeCarAppService : CarAppService() {
     override fun createHostValidator(): HostValidator {
-        // Allow all hosts to support direct installation, sideloading, and all car head units
         return HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
     }
 
@@ -54,13 +65,18 @@ class MapMeCarAppService : CarAppService() {
 }
 
 /**
- * Session managing connection to LocationService, map surface renderer, and lifecycle-aware state invalidation.
+ * Session managing connection to LocationService, live GPS updates, map surface renderer,
+ * and lifecycle-aware state invalidation.
  */
 class MapMeCarSession : Session(), DefaultLifecycleObserver {
     private var locationService: LocationService? = null
     private var isBound = false
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var observeJob: Job? = null
+    
+    private var fusedLocationClient: FusedLocationProviderClient? = null
+    private var liveLocationCallback: LocationCallback? = null
+
     var mapSurfaceRenderer: CarMapSurfaceRenderer? = null
         private set
 
@@ -98,7 +114,41 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
             e.printStackTrace()
         }
 
+        // Immediately start streaming live GPS updates to the map surface renderer
+        startContinuousLocationUpdates()
+
         return MapMeCarMainScreen(carContext, this)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startContinuousLocationUpdates() {
+        try {
+            val fused = LocationServices.getFusedLocationProviderClient(carContext)
+            fusedLocationClient = fused
+
+            fused.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) {
+                    mapSurfaceRenderer?.updateVehicleLocation(loc)
+                }
+            }
+
+            val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L).apply {
+                setMinUpdateIntervalMillis(500L)
+                setMinUpdateDistanceMeters(0.5f)
+            }.build()
+
+            val callback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    for (loc in result.locations) {
+                        mapSurfaceRenderer?.updateVehicleLocation(loc)
+                    }
+                }
+            }
+            liveLocationCallback = callback
+            fused.requestLocationUpdates(req, callback, Looper.getMainLooper())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun bindLocationService() {
@@ -115,6 +165,12 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
     override fun onDestroy(owner: LifecycleOwner) {
         sessionScope.cancel()
+        liveLocationCallback?.let {
+            fusedLocationClient?.removeLocationUpdates(it)
+        }
+        liveLocationCallback = null
+        fusedLocationClient = null
+
         if (isBound) {
             try {
                 carContext.unbindService(serviceConnection)
@@ -147,10 +203,13 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
         }
     }
 
-    fun startTracking(isDrive: Boolean) {
+    /**
+     * Start Drive tracking (All in-car tracking is Drive mode).
+     */
+    fun startTracking(isDrive: Boolean = true) {
         val intent = Intent(carContext, LocationService::class.java).apply {
             action = LocationService.ACTION_START
-            putExtra("EXTRA_IS_DRIVE", isDrive)
+            putExtra("EXTRA_IS_DRIVE", true)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -193,7 +252,8 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 }
 
 /**
- * In-Car Main Screen: Active Tracking HUD when recording, or Drive Hub with Start actions when idle.
+ * Full-screen in-car navigation map screen:
+ * Displays the rotating real-time map from startup with Play/Pause/Stop action controls directly over the map.
  */
 class MapMeCarMainScreen(
     carContext: CarContext,
@@ -202,131 +262,184 @@ class MapMeCarMainScreen(
 
     override fun onGetTemplate(): Template {
         return try {
-            buildTemplate()
+            buildNavigationTemplate()
         } catch (e: Exception) {
             e.printStackTrace()
             buildSafeFallback()
         }
     }
 
-    private fun buildTemplate(): Template {
+    private fun buildNavigationTemplate(): Template {
         val isTracking = session.isTracking
-        val isDrive = session.isTrackingDrive
-        val duration = session.elapsedTimeSeconds
-        val distance = session.totalDistanceMeters
-        val speed = session.currentSpeedKmh
-        val poisCount = session.activePois.size
+        val currentPoints = session.currentPoints
+        val isPaused = !isTracking && currentPoints.isNotEmpty()
 
-        return if (isTracking) {
-            val modeTitle = if (isDrive) "🚗 Drive Recording" else "🚶 Walk Recording"
-            val paneBuilder = Pane.Builder()
+        // 1. Top Action Strip (Play / Pause / Stop / POI / History)
+        val actionStripBuilder = ActionStrip.Builder()
 
-            paneBuilder.addRow(
-                Row.Builder()
-                    .setTitle("⏱️ ${formatDuration(duration)}  •  📏 ${formatDistance(distance)}")
-                    .addText("⚡ ${String.format(java.util.Locale.US, "%.1f km/h", speed)}  •  📍 $poisCount waypoints")
-                    .build()
-            )
+        val playCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_play_arrow)
+        ).build()
 
-            paneBuilder.addAction(
-                Action.Builder()
-                    .setTitle("⏸️ Pause")
-                    .setOnClickListener {
-                        session.pauseTracking()
-                        CarToast.makeText(carContext, "Recording paused", CarToast.LENGTH_SHORT).show()
-                        invalidate()
-                    }
-                    .build()
-            )
+        val pauseCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_pause)
+        ).build()
 
-            paneBuilder.addAction(
-                Action.Builder()
-                    .setTitle("⏹️ Stop & Save")
-                    .setOnClickListener {
-                        session.stopTracking()
-                        CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
-                        invalidate()
-                    }
-                    .build()
-            )
+        val stopCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_stop)
+        ).build()
 
-            val header = Header.Builder()
-                .setTitle(modeTitle)
-                .addEndHeaderAction(
+        val poiCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_poi)
+        ).build()
+
+        val historyCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_history)
+        ).build()
+
+        when {
+            isTracking -> {
+                // Active recording: Show Pause, Stop & Save, and POI
+                actionStripBuilder.addAction(
                     Action.Builder()
-                        .setTitle("📍 POI")
+                        .setTitle("Pause")
+                        .setIcon(pauseCarIcon)
+                        .setOnClickListener {
+                            session.pauseTracking()
+                            CarToast.makeText(carContext, "Recording paused", CarToast.LENGTH_SHORT).show()
+                            invalidate()
+                        }
+                        .build()
+                )
+                actionStripBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("Stop")
+                        .setIcon(stopCarIcon)
+                        .setOnClickListener {
+                            session.stopTracking()
+                            CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
+                            invalidate()
+                        }
+                        .build()
+                )
+                actionStripBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("POI")
+                        .setIcon(poiCarIcon)
                         .setOnClickListener {
                             screenManager.push(CarMarkPoiScreen(carContext, session))
                         }
                         .build()
                 )
-                .build()
-
-            PaneTemplate.Builder(paneBuilder.build())
-                .setHeader(header)
-                .build()
-        } else {
-            // Idle / Ready state
-            val paneBuilder = Pane.Builder()
-
-            paneBuilder.addRow(
-                Row.Builder()
-                    .setTitle("Live Map Active")
-                    .addText("Tap 'Start Drive' below to begin recording your route on this map.")
-                    .build()
-            )
-
-            paneBuilder.addAction(
-                Action.Builder()
-                    .setTitle("🚗 Start Drive")
-                    .setOnClickListener {
-                        session.startTracking(isDrive = true)
-                        CarToast.makeText(carContext, "🚗 Drive tracking started!", CarToast.LENGTH_SHORT).show()
-                        invalidate()
-                    }
-                    .build()
-            )
-
-            paneBuilder.addAction(
-                Action.Builder()
-                    .setTitle("🚶 Start Walk")
-                    .setOnClickListener {
-                        session.startTracking(isDrive = false)
-                        CarToast.makeText(carContext, "🚶 Walk tracking started!", CarToast.LENGTH_SHORT).show()
-                        invalidate()
-                    }
-                    .build()
-            )
-
-            val header = Header.Builder()
-                .setTitle("MapMe v${com.talapp.mapme.BuildConfig.VERSION_NAME}")
-                .addEndHeaderAction(
+            }
+            isPaused -> {
+                // Paused state: Show Resume, Stop & Save, and POI
+                actionStripBuilder.addAction(
                     Action.Builder()
-                        .setTitle("📜 History")
+                        .setTitle("Resume")
+                        .setIcon(playCarIcon)
+                        .setOnClickListener {
+                            session.startTracking(isDrive = true)
+                            CarToast.makeText(carContext, "🚗 Recording resumed", CarToast.LENGTH_SHORT).show()
+                            invalidate()
+                        }
+                        .build()
+                )
+                actionStripBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("Stop")
+                        .setIcon(stopCarIcon)
+                        .setOnClickListener {
+                            session.stopTracking()
+                            CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
+                            invalidate()
+                        }
+                        .build()
+                )
+                actionStripBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("POI")
+                        .setIcon(poiCarIcon)
+                        .setOnClickListener {
+                            screenManager.push(CarMarkPoiScreen(carContext, session))
+                        }
+                        .build()
+                )
+            }
+            else -> {
+                // Idle / Ready state: Show Drive (Play) and History
+                actionStripBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("Drive")
+                        .setIcon(playCarIcon)
+                        .setOnClickListener {
+                            session.startTracking(isDrive = true)
+                            CarToast.makeText(carContext, "🚗 Drive tracking started!", CarToast.LENGTH_SHORT).show()
+                            invalidate()
+                        }
+                        .build()
+                )
+                actionStripBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("History")
+                        .setIcon(historyCarIcon)
                         .setOnClickListener {
                             screenManager.push(CarTripListScreen(carContext, session))
                         }
                         .build()
                 )
-                .build()
-
-            PaneTemplate.Builder(paneBuilder.build())
-                .setHeader(header)
-                .build()
+            }
         }
-    }
 
-    private fun buildSafeFallback(): Template {
-        val pane = Pane.Builder()
-            .addRow(
-                Row.Builder()
-                    .setTitle("MapMe Hub")
-                    .addText("Live Map Active")
+        // 2. Map Action Strip (Pan mode, Recenter, and Heading-Up / North-Up toggle)
+        val myLocationIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_my_location)
+        ).build()
+
+        val exploreIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_explore)
+        ).build()
+
+        val mapActionStrip = ActionStrip.Builder()
+            .addAction(Action.PAN)
+            .addAction(
+                Action.Builder()
+                    .setIcon(myLocationIcon)
+                    .setOnClickListener {
+                        session.mapSurfaceRenderer?.recenterOnVehicle()
+                        CarToast.makeText(carContext, "Centered on vehicle", CarToast.LENGTH_SHORT).show()
+                    }
                     .build()
             )
             .addAction(
                 Action.Builder()
-                    .setTitle("🚗 Start Drive")
+                    .setIcon(exploreIcon)
+                    .setOnClickListener {
+                        session.mapSurfaceRenderer?.toggleHeadingMode()
+                        val isHeading = session.mapSurfaceRenderer?.isHeadingUp == true
+                        val modeLabel = if (isHeading) "Heading-Up (Drive)" else "North-Up"
+                        CarToast.makeText(carContext, modeLabel, CarToast.LENGTH_SHORT).show()
+                    }
+                    .build()
+            )
+            .build()
+
+        return NavigationTemplate.Builder()
+            .setActionStrip(actionStripBuilder.build())
+            .setMapActionStrip(mapActionStrip)
+            .build()
+    }
+
+    private fun buildSafeFallback(): Template {
+        val playCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_play_arrow)
+        ).build()
+
+        val actionStrip = ActionStrip.Builder()
+            .addAction(
+                Action.Builder()
+                    .setTitle("Drive")
+                    .setIcon(playCarIcon)
                     .setOnClickListener {
                         session.startTracking(isDrive = true)
                         invalidate()
@@ -335,8 +448,8 @@ class MapMeCarMainScreen(
             )
             .build()
 
-        return PaneTemplate.Builder(pane)
-            .setHeader(Header.Builder().setTitle("MapMe").build())
+        return NavigationTemplate.Builder()
+            .setActionStrip(actionStrip)
             .build()
     }
 }
@@ -367,7 +480,7 @@ class CarMarkPoiScreen(
                     .setTitle(poi)
                     .setOnClickListener {
                         session.addPoi(poi)
-                        CarToast.makeText(carContext, "Waypoint saved: $poi", CarToast.LENGTH_SHORT).show()
+                        CarToast.makeText(carContext, "Waypoint saved: ", CarToast.LENGTH_SHORT).show()
                         screenManager.pop()
                     }
                     .build()
@@ -387,7 +500,7 @@ class CarMarkPoiScreen(
 }
 
 /**
- * Screen listing recent trips and walks recorded in the database.
+ * Screen listing recent trips and drives recorded in the database.
  */
 class CarTripListScreen(
     carContext: CarContext,
@@ -442,7 +555,7 @@ class CarTripListScreen(
             listBuilder.addItem(
                 Row.Builder()
                     .setTitle(trip.title)
-                    .addText("$dateStr  •  $dist  •  $dur")
+                    .addText("  •    •  ")
                     .setOnClickListener {
                         screenManager.push(CarTripDetailScreen(carContext, trip.id))
                     }
@@ -538,21 +651,21 @@ class CarTripDetailScreen(
         val poiSummary = if (pois.isEmpty()) {
             "No waypoints recorded"
         } else {
-            "${pois.size} waypoints: " + pois.mapNotNull { it.text }.joinToString(", ")
+            " waypoints: " + pois.mapNotNull { it.text }.joinToString(", ")
         }
 
         val pane = Pane.Builder()
             .addRow(
                 Row.Builder()
                     .setTitle(currentWalk.title)
-                    .addText("Started: $dateStr")
+                    .addText("Started: ")
                     .build()
             )
             .addRow(
                 Row.Builder()
                     .setTitle("Statistics")
-                    .addText("📏 Distance: $dist  •  ⏱️ Duration: $dur")
-                    .addText("⚡ Avg Speed: ${String.format("%.1f", avgSpeedKmh)} km/h")
+                    .addText("📏 Distance:   •  ⏱️ Duration: ")
+                    .addText("⚡ Avg Speed:  km/h")
                     .build()
             )
             .addRow(
@@ -594,6 +707,6 @@ private fun formatDistance(meters: Double): String {
     return if (nonNegative < 1000) {
         String.format("%.0f m", nonNegative)
     } else {
-        String.format("%.2f km", nonNegative / 1000.0)
+        String.format("%.1f km", nonNegative / 1000.0)
     }
 }
