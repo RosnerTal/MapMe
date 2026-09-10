@@ -17,10 +17,13 @@ import com.talapp.mapme.data.WalkPoint
 import com.talapp.mapme.data.WalkPoi
 import com.talapp.mapme.data.RouteConsolidator
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.*
 
 /**
@@ -42,7 +45,9 @@ class CarMapSurfaceRenderer(
     private var visibleRect = Rect()
 
     private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var renderJob: Job? = null
+    private val renderMutex = Mutex()
+    private val renderPending = AtomicBoolean(false)
+    private val inFlightTiles = ConcurrentHashMap.newKeySet<String>()
 
     // Camera / Map View State
     private var centerLat = 32.0853
@@ -51,7 +56,7 @@ class CarMapSurfaceRenderer(
     private var vehicleLon = 34.7818
     private var vehicleSpeedKmh = 0f
     private var hasLocationLock = false
-    private var zoomLevel = 16.2
+    private var zoomLevel = 16.0
     
     // Heading / Navigation orientation
     var isHeadingUp = true
@@ -214,6 +219,22 @@ class CarMapSurfaceRenderer(
                 val db = WalkDatabase.getDatabase(carContext)
                 val walks = db.walkDao().getAllWalksList()
                 pastWalks = walks
+                if (!hasLocationLock && walks.isNotEmpty()) {
+                    val latest = walks.firstOrNull()
+                    if (latest != null) {
+                        try {
+                            val pathType = object : TypeToken<List<WalkPoint>>() {}.type
+                            val pts: List<WalkPoint> = Gson().fromJson(latest.pointsJson, pathType) ?: emptyList()
+                            if (pts.isNotEmpty()) {
+                                val pt = pts.last()
+                                vehicleLat = pt.latitude
+                                vehicleLon = pt.longitude
+                                centerLat = pt.latitude
+                                centerLon = pt.longitude
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
                 requestRender()
             } catch (_: Exception) {}
         }
@@ -274,7 +295,6 @@ class CarMapSurfaceRenderer(
 
     override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
         surface = null
-        renderJob?.cancel()
     }
 
     override fun onVisibleAreaChanged(visibleArea: Rect) {
@@ -289,15 +309,16 @@ class CarMapSurfaceRenderer(
 
     override fun onScroll(distanceX: Float, distanceY: Float) {
         isFollowVehicle = false
-        val deltaLon = (distanceX / (256.0 * (1 shl zoomLevel.toInt()))) * 360.0
-        val deltaLat = -(distanceY / (256.0 * (1 shl zoomLevel.toInt()))) * 360.0
+        val z = zoomLevel.roundToInt().coerceIn(12, 18)
+        val deltaLon = (distanceX / (256.0 * (1 shl z))) * 360.0
+        val deltaLat = -(distanceY / (256.0 * (1 shl z))) * 360.0
         centerLon += deltaLon
         centerLat = (centerLat + deltaLat).coerceIn(-80.0, 80.0)
         requestRender()
     }
 
     override fun onScale(focusX: Float, focusY: Float, scaleFactor: Float) {
-        zoomLevel = (zoomLevel + ln(scaleFactor.toDouble()) / ln(2.0)).coerceIn(12.0, 18.5)
+        zoomLevel = (zoomLevel + ln(scaleFactor.toDouble()) / ln(2.0)).coerceIn(12.0, 18.0)
         requestRender()
     }
 
@@ -310,9 +331,19 @@ class CarMapSurfaceRenderer(
         val s = surface ?: return
         if (!s.isValid) return
 
-        renderJob?.cancel()
-        renderJob = renderScope.launch(Dispatchers.Default) {
-            renderFrame()
+        renderScope.launch(Dispatchers.Default) {
+            if (!renderMutex.tryLock()) {
+                renderPending.set(true)
+                return@launch
+            }
+            try {
+                do {
+                    renderPending.set(false)
+                    renderFrame()
+                } while (renderPending.get())
+            } finally {
+                renderMutex.unlock()
+            }
         }
     }
 
@@ -339,7 +370,7 @@ class CarMapSurfaceRenderer(
                 drawMap(canvas, session.currentPoints)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.w("CarMapRenderer", "Render frame error: ${e.message}")
         } finally {
             if (canvas != null) {
                 try {
@@ -364,25 +395,29 @@ class CarMapSurfaceRenderer(
         // Driving rotation: Rotate world so heading direction points straight UP
         val worldRotation = if (isHeadingUp) -headingDegrees else 0f
 
+        val z = zoomLevel.roundToInt().coerceIn(12, 18)
+        val zoomScale = 2.0.pow(zoomLevel - z).toFloat()
+
         canvas.save()
         canvas.rotate(worldRotation, vx, vy)
+        canvas.scale(zoomScale, zoomScale, vx, vy)
 
-        // 2. Draw OpenStreetMap Tiles (Rotated)
-        drawOsmTiles(canvas, vx, vy, w, h)
+        // 2. Draw OpenStreetMap Tiles (Rotated & Scaled)
+        drawOsmTiles(canvas, vx, vy, w, h, z)
 
-        // 3. Draw Past Recorded Drives & Heatmap (Rotated)
-        drawPastWalks(canvas, vx, vy)
+        // 3. Draw Past Recorded Drives & Heatmap (Rotated & Scaled)
+        drawPastWalks(canvas, vx, vy, z)
 
-        // 4. Draw Active Drive Path (Rotated)
-        drawActivePath(canvas, currentPoints, vx, vy)
+        // 4. Draw Active Drive Path (Rotated & Scaled)
+        drawActivePath(canvas, currentPoints, vx, vy, z)
 
-        // 5. Draw Active POIs (Rotated)
-        drawPois(canvas, session.activePois, vx, vy, worldRotation)
-
-        // 6. Draw Vehicle Marker (Center of rotation, forward-facing)
-        drawVehicleMarker(canvas, vx, vy, isHeadingUp)
+        // 5. Draw Active POIs (Rotated & Scaled)
+        drawPois(canvas, session.activePois, vx, vy, worldRotation, z)
 
         canvas.restore()
+
+        // 6. Draw Vehicle Marker (Screen space at vx, vy)
+        drawVehicleMarker(canvas, vx, vy, isHeadingUp)
 
         // --- Screen-Space Overlays (Unrotated for legibility) ---
 
@@ -393,13 +428,12 @@ class CarMapSurfaceRenderer(
         drawTelemetryHud(canvas, w, h)
     }
 
-    private fun drawOsmTiles(canvas: Canvas, vx: Float, vy: Float, screenW: Float, screenH: Float) {
-        val z = zoomLevel.toInt()
+    private fun drawOsmTiles(canvas: Canvas, vx: Float, vy: Float, screenW: Float, screenH: Float, z: Int) {
         val centerPixelX = lonToPixelX(centerLon, z)
         val centerPixelY = latToPixelY(centerLat, z)
 
         // Safe radius to guarantee rotated viewport is covered with tiles without black corners
-        val radius = hypot(screenW.toDouble(), screenH.toDouble()).toFloat() / 2f + 256f
+        val radius = hypot(screenW.toDouble(), screenH.toDouble()).toFloat() / 2f + 300f
 
         val minPixelX = centerPixelX - radius
         val maxPixelX = centerPixelX + radius
@@ -411,9 +445,14 @@ class CarMapSurfaceRenderer(
         val minTileY = (minPixelY / 256.0).toInt()
         val maxTileY = (maxPixelY / 256.0).toInt()
 
+        val maxTiles = 1 shl z
+
         for (tx in minTileX..maxTileX) {
             for (ty in minTileY..maxTileY) {
-                val tileKey = "//"
+                if (ty < 0 || ty >= maxTiles) continue
+                val normX = ((tx % maxTiles) + maxTiles) % maxTiles
+
+                val tileKey = "$z/$normX/$ty"
                 val tileLeft = (vx + (tx * 256.0 - centerPixelX)).toFloat()
                 val tileTop = (vy + (ty * 256.0 - centerPixelY)).toFloat()
 
@@ -422,7 +461,7 @@ class CarMapSurfaceRenderer(
                     canvas.drawBitmap(cached, tileLeft, tileTop, tilePaint)
                 } else {
                     canvas.drawRect(tileLeft, tileTop, tileLeft + 256f, tileTop + 256f, gridPaint)
-                    fetchTileAsync(z, tx, ty)
+                    fetchTileAsync(z, normX, ty)
                 }
             }
         }
@@ -430,22 +469,29 @@ class CarMapSurfaceRenderer(
 
     private fun fetchTileAsync(z: Int, x: Int, y: Int) {
         val key = "$z/$x/$y"
+        if (!inFlightTiles.add(key)) return
         renderScope.launch(Dispatchers.IO) {
             try {
                 val diskFile = File(diskCacheDir, "$z-$x-$y.png")
                 var bitmap: Bitmap? = null
                 if (diskFile.exists() && diskFile.length() > 0) {
                     bitmap = BitmapFactory.decodeFile(diskFile.absolutePath)
-                } else {
+                    if (bitmap == null) {
+                        diskFile.delete()
+                    }
+                }
+                if (bitmap == null) {
                     val url = URL("https://tile.openstreetmap.org/$z/$x/$y.png")
                     val conn = url.openConnection() as HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "MapMe-AndroidAuto/4.3")
-                    conn.connectTimeout = 4000
-                    conn.readTimeout = 4000
+                    conn.setRequestProperty("User-Agent", "MapMe-AndroidAuto/4.3 (contact: mapme@talapp.com)")
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
                     if (conn.responseCode == 200) {
                         val bytes = conn.inputStream.readBytes()
-                        diskFile.writeBytes(bytes)
-                        bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bytes.isNotEmpty()) {
+                            diskFile.writeBytes(bytes)
+                            bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        }
                     }
                     conn.disconnect()
                 }
@@ -453,12 +499,14 @@ class CarMapSurfaceRenderer(
                     tileCache.put(key, bitmap)
                     requestRender()
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            } finally {
+                inFlightTiles.remove(key)
+            }
         }
     }
 
-    private fun drawPastWalks(canvas: Canvas, vx: Float, vy: Float) {
-        val z = zoomLevel.toInt()
+    private fun drawPastWalks(canvas: Canvas, vx: Float, vy: Float, z: Int) {
         val centerPixelX = lonToPixelX(centerLon, z)
         val centerPixelY = latToPixelY(centerLat, z)
 
@@ -506,10 +554,9 @@ class CarMapSurfaceRenderer(
         }
     }
 
-    private fun drawActivePath(canvas: Canvas, currentPoints: List<WalkPoint>, vx: Float, vy: Float) {
+    private fun drawActivePath(canvas: Canvas, currentPoints: List<WalkPoint>, vx: Float, vy: Float, z: Int) {
         if (currentPoints.size < 2) return
 
-        val z = zoomLevel.toInt()
         val centerPixelX = lonToPixelX(centerLon, z)
         val centerPixelY = latToPixelY(centerLat, z)
 
@@ -531,9 +578,9 @@ class CarMapSurfaceRenderer(
         canvas.drawPath(path, activeLinePaint)
     }
 
-    private fun drawPois(canvas: Canvas, pois: List<WalkPoi>, vx: Float, vy: Float, worldRotation: Float) {
+    private fun drawPois(canvas: Canvas, pois: List<WalkPoi>, vx: Float, vy: Float, worldRotation: Float, z: Int) {
         if (pois.isEmpty()) return
-        val z = zoomLevel.toInt()
+
         val centerPixelX = lonToPixelX(centerLon, z)
         val centerPixelY = latToPixelY(centerLat, z)
 
@@ -551,6 +598,7 @@ class CarMapSurfaceRenderer(
             canvas.restore()
         }
     }
+
 
     private fun drawVehicleMarker(canvas: Canvas, vx: Float, vy: Float, isHeadingUp: Boolean) {
         // Outer pulsing radar ring
@@ -677,7 +725,7 @@ class CarMapSurfaceRenderer(
         if (isTracking || isPaused) {
             val distStr = formatDistance(session.totalDistanceMeters)
             val durStr = formatDuration(session.elapsedTimeSeconds)
-            val tripStats = "  •  "
+            val tripStats = "$distStr  •  $durStr"
             canvas.drawText(tripStats, left + 16f, top + 84f, subTextPaint)
         }
     }

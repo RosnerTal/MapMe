@@ -1,4 +1,4 @@
-﻿package com.talapp.mapme.services
+package com.talapp.mapme.services
 
 import android.annotation.SuppressLint
 import android.content.ComponentName
@@ -258,7 +258,30 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 class MapMeCarMainScreen(
     carContext: CarContext,
     private val session: MapMeCarSession
-) : Screen(carContext) {
+) : Screen(carContext), DefaultLifecycleObserver {
+
+    init {
+        lifecycle.addObserver(this)
+    }
+
+    override fun onCreate(owner: LifecycleOwner) {
+        attachSurfaceCallback()
+    }
+
+    override fun onResume(owner: LifecycleOwner) {
+        attachSurfaceCallback()
+    }
+
+    private fun attachSurfaceCallback() {
+        try {
+            session.mapSurfaceRenderer?.let { renderer ->
+                carContext.getCarService(androidx.car.app.AppManager::class.java).setSurfaceCallback(renderer)
+                renderer.requestRender()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     override fun onGetTemplate(): Template {
         return try {
@@ -480,7 +503,7 @@ class CarMarkPoiScreen(
                     .setTitle(poi)
                     .setOnClickListener {
                         session.addPoi(poi)
-                        CarToast.makeText(carContext, "Waypoint saved: ", CarToast.LENGTH_SHORT).show()
+                        CarToast.makeText(carContext, "Waypoint saved: $poi", CarToast.LENGTH_SHORT).show()
                         screenManager.pop()
                     }
                     .build()
@@ -555,7 +578,7 @@ class CarTripListScreen(
             listBuilder.addItem(
                 Row.Builder()
                     .setTitle(trip.title)
-                    .addText("  •    •  ")
+                    .addText("$dist  •  $dur  •  $dateStr")
                     .setOnClickListener {
                         screenManager.push(CarTripDetailScreen(carContext, trip.id))
                     }
@@ -651,21 +674,21 @@ class CarTripDetailScreen(
         val poiSummary = if (pois.isEmpty()) {
             "No waypoints recorded"
         } else {
-            " waypoints: " + pois.mapNotNull { it.text }.joinToString(", ")
+            "${pois.size} waypoints: " + pois.mapNotNull { it.text }.joinToString(", ")
         }
 
         val pane = Pane.Builder()
             .addRow(
                 Row.Builder()
                     .setTitle(currentWalk.title)
-                    .addText("Started: ")
+                    .addText("Started: $dateStr")
                     .build()
             )
             .addRow(
                 Row.Builder()
                     .setTitle("Statistics")
-                    .addText("📏 Distance:   •  ⏱️ Duration: ")
-                    .addText("⚡ Avg Speed:  km/h")
+                    .addText("📏 Distance: $dist  •  ⏱️ Duration: $dur")
+                    .addText(String.format(java.util.Locale.US, "⚡ Avg Speed: %.1f km/h", avgSpeedKmh))
                     .build()
             )
             .addRow(
