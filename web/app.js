@@ -132,15 +132,6 @@ function formatSpeed(metersPerSec) {
     return `${kmh.toFixed(1)} km/h`;
 }
 
-function getSegmentKey(lat1, lon1, lat2, lon2) {
-    const rLat1 = lat1.toFixed(5);
-    const rLon1 = lon1.toFixed(5);
-    const rLat2 = lat2.toFixed(5);
-    const rLon2 = lon2.toFixed(5);
-    return (rLat1 + rLon1 < rLat2 + rLon2) 
-        ? `${rLat1},${rLon1}_${rLat2},${rLon2}`
-        : `${rLat2},${rLon2}_${rLat1},${rLon1}`;
-}
 
 // ----------------------------------------------------
 // UI Screen Toggles & Listeners
@@ -522,6 +513,196 @@ function drawWalkRoute(walk, fitBounds = false) {
     }
 }
 
+// ----------------------------------------------------
+// Spatial Corridor Deduplication Engine (Display-Only)
+// Merges close/repeated routes into a single clean line without altering any raw database records.
+// ----------------------------------------------------
+const ROUTE_CELL_SIZE = 0.0005; // ~50 meters spatial grid
+const ROUTE_CONSOLIDATION_THRESHOLD_METERS = 22.0; // Corridor width (e.g. dual lane road / GPS drift)
+
+function pointToSegmentDistanceMeters(latP, lonP, latA, lonA, latB, lonB) {
+    const latMid = (latA + latB) / 2.0;
+    const mPerDegLat = 110852.0;
+    const mPerDegLon = 111320.0 * Math.cos((latMid * Math.PI) / 180.0);
+
+    const xA = 0.0;
+    const yA = 0.0;
+    const xB = (lonB - lonA) * mPerDegLon;
+    const yB = (latB - latA) * mPerDegLat;
+    const xP = (lonP - lonA) * mPerDegLon;
+    const yP = (latP - latA) * mPerDegLat;
+
+    const dx = xB - xA;
+    const dy = yB - yA;
+    const segLenSq = dx * dx + dy * dy;
+
+    if (segLenSq < 1e-6) {
+        return Math.sqrt(xP * xP + yP * yP);
+    }
+
+    const t = Math.max(0.0, Math.min(1.0, ((xP - xA) * dx + (yP - yA) * dy) / segLenSq));
+    const projX = xA + t * dx;
+    const projY = yA + t * dy;
+
+    const distX = xP - projX;
+    const distY = yP - projY;
+    return Math.sqrt(distX * distX + distY * distY);
+}
+
+class SpatialRouteIndex {
+    constructor() {
+        this.grid = new Map();
+    }
+
+    cellKey(lat, lon) {
+        const cx = Math.floor(lon / ROUTE_CELL_SIZE);
+        const cy = Math.floor(lat / ROUTE_CELL_SIZE);
+        return `${cx}:${cy}`;
+    }
+
+    insert(lat1, lon1, lat2, lon2) {
+        const midLat = (lat1 + lat2) / 2.0;
+        const midLon = (lon1 + lon2) / 2.0;
+        const k = this.cellKey(midLat, midLon);
+        if (!this.grid.has(k)) {
+            this.grid.set(k, []);
+        }
+        this.grid.get(k).push({ lat1, lon1, lat2, lon2 });
+    }
+
+    isPointNearAny(lat, lon, thresholdMeters) {
+        const cx = Math.floor(lon / ROUTE_CELL_SIZE);
+        const cy = Math.floor(lat / ROUTE_CELL_SIZE);
+
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const k = `${cx + dx}:${cy + dy}`;
+                const list = this.grid.get(k);
+                if (!list) continue;
+                for (let i = 0; i < list.length; i++) {
+                    const seg = list[i];
+                    const d = pointToSegmentDistanceMeters(lat, lon, seg.lat1, seg.lon1, seg.lat2, seg.lon2);
+                    if (d <= thresholdMeters) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+}
+
+function getWalkSegments(walk, pts) {
+    const titleLower = (walk.title || "").toLowerCase();
+    const isDriveModeByTitle = titleLower.startsWith("drive on") || titleLower.startsWith("drive at");
+    const isWalkModeByTitle = titleLower.startsWith("walk on") || titleLower.startsWith("walk at");
+
+    const pointsMode = [];
+    for (let i = 0; i < pts.length; i++) {
+        let isDriving = false;
+        if (isDriveModeByTitle) {
+            isDriving = true;
+        } else if (isWalkModeByTitle) {
+            isDriving = false;
+        } else {
+            const pointsWindow = [];
+            const startIdx = Math.max(0, i - 1);
+            const endIdx = Math.min(pts.length - 1, i + 2);
+            for (let w = startIdx; w <= endIdx; w++) {
+                pointsWindow.push(pts[w]);
+            }
+            const avgSpeedKmh = (pointsWindow.reduce((sum, p) => sum + (p.speed || 0), 0) / pointsWindow.length) * 3.6;
+            isDriving = avgSpeedKmh >= 7.0;
+        }
+        pointsMode.push(isDriving);
+    }
+
+    const segments = [];
+    let currentGroup = [];
+    let currentMode = null;
+
+    for (let i = 0; i < pts.length; i++) {
+        const pt = pts[i];
+        const ptMode = pointsMode[i];
+
+        if (currentGroup.length === 0) {
+            currentGroup.push(pt);
+            currentMode = ptMode;
+        } else if (ptMode === currentMode) {
+            currentGroup.push(pt);
+        } else {
+            if (currentGroup.length > 1) {
+                segments.push({ walk, points: currentGroup, isDriving: currentMode });
+            }
+            // Carry over last point to prevent disconnected gaps
+            currentGroup = [pts[i - 1], pt];
+            currentMode = ptMode;
+        }
+    }
+
+    if (currentGroup.length > 1) {
+        segments.push({ walk, points: currentGroup, isDriving: currentMode });
+    }
+
+    return segments;
+}
+
+function consolidateRoutes(routes, thresholdMeters = ROUTE_CONSOLIDATION_THRESHOLD_METERS) {
+    const driveRoutes = routes.filter(r => r.isDriving);
+    const walkRoutes = routes.filter(r => !r.isDriving);
+
+    const polylines = [];
+    consolidateGroup(driveRoutes, true, thresholdMeters, polylines);
+    consolidateGroup(walkRoutes, false, thresholdMeters, polylines);
+    return polylines;
+}
+
+function consolidateGroup(routes, isDriving, thresholdMeters, outPolylines) {
+    const index = new SpatialRouteIndex();
+
+    for (const route of routes) {
+        const pts = route.points;
+        if (pts.length < 2) continue;
+
+        let currentSegment = [];
+
+        for (let i = 0; i < pts.length - 1; i++) {
+            const p1 = pts[i];
+            const p2 = pts[i + 1];
+            const midLat = (p1.latitude + p2.latitude) / 2.0;
+            const midLon = (p1.longitude + p2.longitude) / 2.0;
+
+            const isCovered = index.isPointNearAny(midLat, midLon, thresholdMeters);
+
+            if (!isCovered) {
+                index.insert(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+
+                if (currentSegment.length === 0) {
+                    currentSegment.push([p1.latitude, p1.longitude]);
+                }
+                currentSegment.push([p2.latitude, p2.longitude]);
+            } else {
+                if (currentSegment.length >= 2) {
+                    outPolylines.push({
+                        latlngs: currentSegment,
+                        isDriving: isDriving,
+                        walk: route.walk
+                    });
+                }
+                currentSegment = [];
+            }
+        }
+
+        if (currentSegment.length >= 2) {
+            outPolylines.push({
+                latlngs: currentSegment,
+                isDriving: isDriving,
+                walk: route.walk
+            });
+        }
+    }
+}
+
 function redrawAllMapLayers(fitActiveWalk = false) {
     if (!map) return;
 
@@ -554,126 +735,69 @@ function redrawAllMapLayers(fitActiveWalk = false) {
     if (filteredWalksData.length === 0) return;
 
     const allLatLns = [];
+    const activeCard = document.querySelector(".walk-card.active");
+    const activeWalkId = activeCard ? activeCard.dataset.id : null;
 
-    // 2. If showAllWalks is checked, draw all routes segmented by speed with thickness/opacity matching density
+    // 2. If showAllWalks is checked, draw consolidated routes display-only
     if (showAllWalks) {
-        // Pre-parse past walks and compute coordinates overlaps
-        const parsedWalks = [];
-        const segmentCountMap = {};
+        const backgroundRoutes = [];
 
         filteredWalksData.forEach(walk => {
+            // If this walk is selected, skip it from background consolidation
+            // so its full un-merged route is drawn with high-contrast highlight below
+            if (activeWalkId && walk.id === activeWalkId) {
+                return;
+            }
+
             let pts = [];
             try {
                 pts = JSON.parse(walk.pointsJson);
             } catch(e) {
                 return;
             }
-            if (pts.length === 0) return;
-            parsedWalks.push({ walk, pts });
+            if (pts.length < 2) return;
 
-            // Count traversal frequency
-            for (let i = 0; i < pts.length - 1; i++) {
-                const pt1 = pts[i];
-                const pt2 = pts[i + 1];
-                const key = getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude);
-                segmentCountMap[key] = (segmentCountMap[key] || 0) + 1;
-            }
+            const walkSegments = getWalkSegments(walk, pts);
+            backgroundRoutes.push(...walkSegments);
         });
 
-        parsedWalks.forEach(({ walk, pts }) => {
-            const activeCard = document.querySelector(".walk-card.active");
-            const isSelected = activeCard && activeCard.dataset.id === walk.id;
+        // Spatial consolidation (walks and drives kept strictly separate)
+        const consolidated = consolidateRoutes(backgroundRoutes);
 
-            // Speed coloring constants for past walks
-            const basePastColor = isSelected ? "#10b981" : "#8b5cf6"; // Neon Emerald if selected, otherwise Electric Violet
-            const driveColor = isSelected ? "#ff3b30" : "#ee5859"; // Bright red if selected, otherwise lighter red
-            
-            // Build mode information for every point
-            const pointsMode = []; // Array of booleans: true = driving, false = walking
-            for (let i = 0; i < pts.length; i++) {
-        const titleLower = walk.title.toLowerCase();
-        const isDriveModeByTitle = titleLower.startsWith("drive on") || titleLower.startsWith("drive at");
-        const isWalkModeByTitle = titleLower.startsWith("walk on") || titleLower.startsWith("walk at");
-                
-                let isDriving = false;
-                if (isDriveModeByTitle) {
-                    isDriving = true;
-                } else if (isWalkModeByTitle) {
-                    isDriving = false;
-                } else {
-                    // Fallback to speed threshold calculation if title has no clear mode keyword
-                    const pointsWindow = [];
-                    const startIdx = Math.max(0, i - 1);
-                    const endIdx = Math.min(pts.length - 1, i + 2);
-                    for (let w = startIdx; w <= endIdx; w++) {
-                        pointsWindow.push(pts[w]);
-                    }
-                    
-                    const avgSpeedKmh = (pointsWindow.reduce((sum, p) => sum + p.speed, 0) / pointsWindow.length) * 3.6;
-                    isDriving = avgSpeedKmh >= 7.0;
-                }
-                pointsMode.push(isDriving);
-            }
+        consolidated.forEach(item => {
+            if (item.isDriving && !showDrives) return;
+            if (!item.isDriving && !showWalks) return;
 
-            // Group contiguous points of the same travel mode
-            let currentGroup = [];
-            let currentGroupMode = null;
+            item.latlngs.forEach(ll => allLatLns.push(ll));
 
-            for (let i = 0; i < pts.length; i++) {
-                const pt = pts[i];
-                const ptMode = pointsMode[i];
+            const finalColor = item.isDriving ? "#ee5859" : "#8b5cf6"; // Lighter red for drive, Electric Violet for walk
 
-                if (currentGroup.length === 0) {
-                    currentGroup.push([pt.latitude, pt.longitude]);
-                    currentGroupMode = ptMode;
-                } else if (ptMode === currentGroupMode) {
-                    currentGroup.push([pt.latitude, pt.longitude]);
-                } else {
-                    // Draw current segment group
-                    drawContiguousSegment(currentGroup, currentGroupMode, isSelected, walk);
-                    // Start new group, carrying over the last point of the previous group to avoid gaps
-                    currentGroup = [[pts[i - 1].latitude, pts[i - 1].longitude], [pt.latitude, pt.longitude]];
-                    currentGroupMode = ptMode;
-                }
-            }
+            const pastLine = L.polyline(item.latlngs, {
+                color: finalColor,
+                opacity: 0.65,
+                weight: 5.0,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }).addTo(map);
 
-            if (currentGroup.length > 1) {
-                drawContiguousSegment(currentGroup, currentGroupMode, isSelected, walk);
-            }
-
-            function drawContiguousSegment(latlngs, isDriving, isSelected, walk) {
-                // Skip rendering if filtered out
-                if (isDriving && !showDrives) return;
-                if (!isDriving && !showWalks) return;
-
-                latlngs.forEach(ll => allLatLns.push(ll));
-
-                const finalColor = isDriving ? driveColor : basePastColor;
-                
-                // Group opacity and thickness properties
-                const dynamicOpacity = isSelected ? 1.0 : 0.65;
-                const dynamicWeight = isSelected ? 8.5 : 5.0;
-
-                const pastLine = L.polyline(latlngs, {
-                    color: finalColor,
-                    opacity: dynamicOpacity,
-                    weight: dynamicWeight,
-                    lineCap: 'round',
-                    lineJoin: 'round'
-                }).addTo(map);
-
-                pastLine.on("click", () => {
-                    const card = document.querySelector(`.walk-card[data-id="${walk.id}"]`);
+            pastLine.on("click", () => {
+                if (item.walk) {
+                    const card = document.querySelector(`.walk-card[data-id="${item.walk.id}"]`);
                     if (card) {
-                        selectWalk(walk, card);
+                        selectWalk(item.walk, card);
                         card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                     }
-                });
+                }
+            });
 
-                pastWalkLayers.push(pastLine);
-            }
+            pastWalkLayers.push(pastLine);
+        });
 
-            if (showPois) {
+        // Background POIs
+        if (showPois) {
+            filteredWalksData.forEach(walk => {
+                if (activeWalkId && walk.id === activeWalkId) return;
+
                 let pois = [];
                 if (walk.poisJson) {
                     try {
@@ -701,15 +825,13 @@ function redrawAllMapLayers(fitActiveWalk = false) {
                         
                     pastPoiLayers.push(m);
                 });
-            }
-        });
+            });
+        }
     }
 
-    // 3. Draw active walk in neon cyan (if selected)
-    const activeCard = document.querySelector(".walk-card.active");
+    // 3. Draw active walk in neon cyan / coral with glowing effect and start/end markers
     if (activeCard) {
-        const activeId = activeCard.dataset.id;
-        const activeWalk = currentWalksData.find(w => w.id === activeId);
+        const activeWalk = currentWalksData.find(w => w.id === activeCard.dataset.id);
         if (activeWalk) {
             drawWalkRoute(activeWalk, fitActiveWalk);
         }

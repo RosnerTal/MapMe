@@ -33,6 +33,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.talapp.mapme.data.Walk
 import com.talapp.mapme.data.WalkPoint
+import com.talapp.mapme.data.RouteConsolidator
 import com.talapp.mapme.theme.*
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -234,39 +235,19 @@ fun OsmMapView(
     LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives, showPois, isDriveRecording) {
         mapView.overlays.clear()
 
-        // 1. Pre-calculate overlaps for past walk segments to render repeated paths darker/bolder
-        // A segment is defined by rounding lat/long to 5 decimal places (~1.1 meter resolution) to group matches
-        val segmentCountMap = mutableMapOf<String, Int>()
-        val parsedPastWalks = pastWalks.map { walk ->
+        // 1. Parse past walks into (Walk, List<WalkPoint>, Boolean (isDrive))
+        val parsedPastWalks = pastWalks.mapNotNull { walk ->
             val walkPoints = try {
                 val listType = object : TypeToken<List<WalkPoint>>() {}.type
                 gson.fromJson<List<WalkPoint>>(walk.pointsJson, listType) ?: emptyList()
             } catch (e: Exception) {
                 emptyList()
             }
-            walk to walkPoints
-        }
+            if (walkPoints.isEmpty()) return@mapNotNull null
 
-        // Count traversal frequencies of segments
-        for ((_, walkPoints) in parsedPastWalks) {
-            for (i in 0 until walkPoints.size - 1) {
-                val pt1 = walkPoints[i]
-                val pt2 = walkPoints[i + 1]
-                val key = getSegmentKey(pt1.latitude, pt1.longitude, pt2.latitude, pt2.longitude)
-                segmentCountMap[key] = (segmentCountMap[key] ?: 0) + 1
-            }
-        }
-
-        val allPointsForCentering = mutableListOf<GeoPoint>()
-        for ((walk, walkPoints) in parsedPastWalks) {
-            if (walkPoints.isEmpty()) continue
-            
-            // Check radius filter if active
+            // Radius filter if active
             if (showPastWalksRadiusMeters > 0.0 && currentLocation != null) {
-                val startPt = walkPoints.firstOrNull()
-                if (startPt == null) {
-                    continue
-                }
+                val startPt = walkPoints.first()
                 val results = FloatArray(1)
                 try {
                     android.location.Location.distanceBetween(
@@ -275,121 +256,114 @@ fun OsmMapView(
                         results
                     )
                     if (results[0] > showPastWalksRadiusMeters) {
-                        continue // Outside radius, skip
+                        return@mapNotNull null
                     }
-                } catch (e: Exception) {
-                    // Fail-safe: don't skip if location calculation fails
-                }
+                } catch (_: Exception) {}
             }
 
-            val geoPoints = walkPoints.map { GeoPoint(it.latitude, it.longitude) }
-            allPointsForCentering.addAll(geoPoints)
+            val titleLower = walk.title.lowercase()
+            val isDriveModeByTitle = titleLower.startsWith("drive on") || titleLower.startsWith("drive at")
+            val isWalkModeByTitle = titleLower.startsWith("walk on") || titleLower.startsWith("walk at")
 
-            // Draw past walk line segmented by speed to distinguish walking vs driving
-            // 7 km/h = 7 / 3.6 = 1.944 m/s
-            val isSelected = walk.id == selectedWalkId
-            val baseWalkColor = if (isSelected) "#FF10B981" else "#8B5CF6" // Vibrant Green or Electric Violet
-            val driveColor = "#FFEE5859" // Vibrant Coral/Red for Driving >= 7km/h
-            val strokeWidth = if (isSelected) 14f else 8f
-
-            // Build mode information for every point in this walk
-            val pointsMode = walkPoints.mapIndexed { idx, pt ->
-                // Determine travel mode (Walk vs Drive) by title prefix for backwards compatibility
-                val isDriveModeByTitle = walk.title.startsWith("Drive on", ignoreCase = true) || walk.title.startsWith("Drive at", ignoreCase = true)
-                val isWalkModeByTitle = walk.title.startsWith("Walk on", ignoreCase = true) || walk.title.startsWith("Walk at", ignoreCase = true)
-                
-                if (isDriveModeByTitle) {
-                    true
-                } else if (isWalkModeByTitle) {
-                    false
-                } else {
-                    // Fallback to speed threshold calculation if title has no clear mode keyword
-                    val pointsWindow = mutableListOf<WalkPoint>()
-                    val startIdx = Math.max(0, idx - 1)
-                    val endIdx = Math.min(walkPoints.size - 1, idx + 2)
-                    for (w in startIdx..endIdx) {
-                        pointsWindow.add(walkPoints[w])
-                    }
-                    val avgSpeedKmh = (pointsWindow.map { it.speed }.average() * 3.6f).toFloat()
-                    avgSpeedKmh >= 7.0f
-                }
+            val isDrive = if (isDriveModeByTitle) {
+                true
+            } else if (isWalkModeByTitle) {
+                false
+            } else {
+                val avgSpeedKmh = (walkPoints.map { it.speed }.average() * 3.6f).toFloat()
+                avgSpeedKmh >= 7.0f
             }
 
-            // Group contiguous points of the same travel mode
-            val groups = mutableListOf<Pair<List<GeoPoint>, Boolean>>()
-            var currentGroup = mutableListOf<GeoPoint>()
-            var currentGroupMode: Boolean? = null
+            Triple(walk, walkPoints, isDrive)
+        }
 
-            for (idx in walkPoints.indices) {
-                val pt = walkPoints[idx]
-                val ptMode = pointsMode[idx]
+        val allPointsForCentering = mutableListOf<GeoPoint>()
+        parsedPastWalks.forEach { (_, pts, _) ->
+            allPointsForCentering.addAll(pts.map { GeoPoint(it.latitude, it.longitude) })
+        }
 
-                if (currentGroup.isEmpty()) {
-                    currentGroup.add(GeoPoint(pt.latitude, pt.longitude))
-                    currentGroupMode = ptMode;
-                } else if (ptMode == currentGroupMode) {
-                    currentGroup.add(GeoPoint(pt.latitude, pt.longitude))
-                } else {
-                    groups.add(currentGroup to currentGroupMode!!)
-                    // Start new group, carrying over the last point of the previous group to avoid gaps
-                    val prevPt = walkPoints[idx - 1]
-                    currentGroup = mutableListOf(GeoPoint(prevPt.latitude, prevPt.longitude), GeoPoint(pt.latitude, pt.longitude))
-                    currentGroupMode = ptMode
-                }
-            }
+        // 2. Separate selected walk vs background walks
+        val selectedTriple = parsedPastWalks.find { it.first.id == selectedWalkId }
+        val backgroundWalks = if (selectedTriple != null) {
+            parsedPastWalks.filter { it.first.id != selectedWalkId }
+        } else {
+            parsedPastWalks
+        }
 
-            if (currentGroup.size > 1) {
-                groups.add(currentGroup to currentGroupMode!!)
-            }
+        // 3. Consolidate close/repeated routes into single clean lines (Walk & Drive kept separate)
+        val consolidatedPolylines = RouteConsolidator.consolidate(backgroundWalks)
 
-            for ((segmentGeo, isDriving) in groups) {
-                // Skip rendering if filtered out
-                if (isDriving && !showDrives) continue
-                if (!isDriving && !showWalks) continue
+        for (poly in consolidatedPolylines) {
+            if (poly.isDrive && !showDrives) continue
+            if (!poly.isDrive && !showWalks) continue
 
-                val finalColorStr = if (isDriving) driveColor else baseWalkColor
-                
-                // Smart opacity & thickness: if segment is panned multiple times, increase opacity & thickness slightly
-                // For simplified grouping, we check density key at the first segment of the group
-                val firstPt = segmentGeo.firstOrNull()
-                val secondPt = segmentGeo.getOrNull(1)
-                val traversalCount = if (firstPt != null && secondPt != null) {
-                    segmentCountMap[getSegmentKey(firstPt.latitude, firstPt.longitude, secondPt.latitude, secondPt.longitude)] ?: 1
-                } else {
-                    1
-                }
+            val colorHex = if (poly.isDrive) "#D9EE5859" else "#D98B5CF6"
+            val geoPts = poly.points.map { GeoPoint(it.latitude, it.longitude) }
 
-                val opacityHex = if (isSelected) {
-                    "FF" // Solid opacity for selected walk
-                } else {
-                    // scale opacity from 0.45 (72 in hex) up to 0.90 (E6 in hex) based on traversals
-                    val alphaVal = (120 + (traversalCount - 1) * 20).coerceAtMost(230)
-                    String.format("%02X", alphaVal)
-                }
+            val pastPolyline = Polyline().apply {
+                outlinePaint.color = android.graphics.Color.parseColor(colorHex)
+                outlinePaint.strokeWidth = 7f
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                setPoints(geoPts)
 
-                val hexColor = if (finalColorStr.length == 9) {
-                    "#" + opacityHex + finalColorStr.substring(3)
-                } else {
-                    "#" + opacityHex + finalColorStr.substring(1)
-                }
-                
-                val dynamicStrokeWidth = if (isSelected) strokeWidth else (strokeWidth + (traversalCount - 1) * 1.5f).coerceAtMost(16f)
-
-                val pastPolyline = Polyline().apply {
-                    outlinePaint.color = android.graphics.Color.parseColor(hexColor)
-                    outlinePaint.strokeWidth = dynamicStrokeWidth
-                    outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                    outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
-                    setPoints(segmentGeo)
-                    
-                    // Click listener to select walk
+                if (poly.sourceWalk != null) {
                     setOnClickListener { _, _, _ ->
-                        onWalkClick?.invoke(walk)
+                        onWalkClick?.invoke(poly.sourceWalk)
                         true
                     }
                 }
-                mapView.overlays.add(pastPolyline)
             }
+            mapView.overlays.add(pastPolyline)
+        }
+
+        // 4. If a specific walk/drive is selected, render its COMPLETE un-merged path highlighted on top
+        if (selectedTriple != null) {
+            val (selectedWalk, selPts, isDrive) = selectedTriple
+            val selColorHex = if (isDrive) "#FFFF3B30" else "#FF10B981"
+            val geoPts = selPts.map { GeoPoint(it.latitude, it.longitude) }
+
+            // Outer glow
+            val glowPolyline = Polyline().apply {
+                outlinePaint.color = android.graphics.Color.parseColor(if (isDrive) "#44FF3B30" else "#4410B981")
+                outlinePaint.strokeWidth = 18f
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                setPoints(geoPts)
+            }
+            mapView.overlays.add(glowPolyline)
+
+            // Core sharp line
+            val corePolyline = Polyline().apply {
+                outlinePaint.color = android.graphics.Color.parseColor(selColorHex)
+                outlinePaint.strokeWidth = 10f
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                setPoints(geoPts)
+            }
+            mapView.overlays.add(corePolyline)
+
+            // Start & End markers for the selected walk
+            if (geoPts.size >= 2) {
+                val startMarker = Marker(mapView).apply {
+                    position = geoPts.first()
+                    icon = ContextCompat.getDrawable(context, android.R.drawable.presence_online)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    title = "Start: ${selectedWalk.title}"
+                }
+                mapView.overlays.add(startMarker)
+
+                val endMarker = Marker(mapView).apply {
+                    position = geoPts.last()
+                    icon = ContextCompat.getDrawable(context, android.R.drawable.presence_busy)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    title = "End: ${selectedWalk.title}"
+                }
+                mapView.overlays.add(endMarker)
+            }
+        }
+
+        for ((walk, _) in parsedPastWalks) {
 
             // Draw past walk POIs
             if (showPois) {

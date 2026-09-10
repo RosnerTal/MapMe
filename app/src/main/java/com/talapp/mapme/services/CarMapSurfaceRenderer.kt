@@ -1,4 +1,4 @@
-﻿package com.talapp.mapme.services
+package com.talapp.mapme.services
 
 import android.content.Context
 import android.graphics.*
@@ -15,6 +15,7 @@ import com.talapp.mapme.data.Walk
 import com.talapp.mapme.data.WalkDatabase
 import com.talapp.mapme.data.WalkPoint
 import com.talapp.mapme.data.WalkPoi
+import com.talapp.mapme.data.RouteConsolidator
 import kotlinx.coroutines.*
 import java.io.File
 import java.net.HttpURLConnection
@@ -98,7 +99,16 @@ class CarMapSurfaceRenderer(
     }
 
     private val pastWalkPaint = Paint().apply {
-        color = Color.parseColor("#5500F5FF") // translucent Neon Cyan
+        color = Color.parseColor("#558B5CF6") // translucent Electric Violet for walks
+        strokeWidth = 6f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        isAntiAlias = true
+    }
+
+    private val pastDrivePaint = Paint().apply {
+        color = Color.parseColor("#55EE5859") // translucent Coral/Red for drives
         strokeWidth = 7f
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -419,17 +429,17 @@ class CarMapSurfaceRenderer(
     }
 
     private fun fetchTileAsync(z: Int, x: Int, y: Int) {
-        val key = "//"
+        val key = "$z/$x/$y"
         renderScope.launch(Dispatchers.IO) {
             try {
-                val diskFile = File(diskCacheDir, "--.png")
+                val diskFile = File(diskCacheDir, "$z-$x-$y.png")
                 var bitmap: Bitmap? = null
                 if (diskFile.exists() && diskFile.length() > 0) {
                     bitmap = BitmapFactory.decodeFile(diskFile.absolutePath)
                 } else {
-                    val url = URL("https://tile.openstreetmap.org///.png")
+                    val url = URL("https://tile.openstreetmap.org/$z/$x/$y.png")
                     val conn = url.openConnection() as HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "MapMe-AndroidAuto/4.1")
+                    conn.setRequestProperty("User-Agent", "MapMe-AndroidAuto/4.3")
                     conn.connectTimeout = 4000
                     conn.readTimeout = 4000
                     if (conn.responseCode == 200) {
@@ -453,25 +463,46 @@ class CarMapSurfaceRenderer(
         val centerPixelY = latToPixelY(centerLat, z)
 
         val pathType = object : TypeToken<List<WalkPoint>>() {}.type
-        for (walk in pastWalks) {
-            try {
-                val pts: List<WalkPoint> = Gson().fromJson(walk.pointsJson, pathType) ?: continue
-                if (pts.size < 2) continue
+        val parsed = pastWalks.mapNotNull { walk ->
+            val pts: List<WalkPoint> = try {
+                Gson().fromJson(walk.pointsJson, pathType) ?: emptyList()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            if (pts.size < 2) return@mapNotNull null
 
-                val path = Path()
-                var first = true
-                for (p in pts) {
-                    val px = (vx + (lonToPixelX(p.longitude, z) - centerPixelX)).toFloat()
-                    val py = (vy + (latToPixelY(p.latitude, z) - centerPixelY)).toFloat()
-                    if (first) {
-                        path.moveTo(px, py)
-                        first = false
-                    } else {
-                        path.lineTo(px, py)
-                    }
+            val titleLower = walk.title.lowercase()
+            val isDrive = if (titleLower.startsWith("drive on") || titleLower.startsWith("drive at")) {
+                true
+            } else if (titleLower.startsWith("walk on") || titleLower.startsWith("walk at")) {
+                false
+            } else {
+                val avgSpeedKmh = (pts.map { it.speed }.average() * 3.6f).toFloat()
+                avgSpeedKmh >= 7.0f
+            }
+            Triple(walk, pts, isDrive)
+        }
+
+        val consolidated = RouteConsolidator.consolidate(parsed)
+
+        for (poly in consolidated) {
+            val pts = poly.points
+            if (pts.size < 2) continue
+
+            val path = Path()
+            var first = true
+            for (p in pts) {
+                val px = (vx + (lonToPixelX(p.longitude, z) - centerPixelX)).toFloat()
+                val py = (vy + (latToPixelY(p.latitude, z) - centerPixelY)).toFloat()
+                if (first) {
+                    path.moveTo(px, py)
+                    first = false
+                } else {
+                    path.lineTo(px, py)
                 }
-                canvas.drawPath(path, pastWalkPaint)
-            } catch (_: Exception) {}
+            }
+            val paint = if (poly.isDrive) pastDrivePaint else pastWalkPaint
+            canvas.drawPath(path, paint)
         }
     }
 
