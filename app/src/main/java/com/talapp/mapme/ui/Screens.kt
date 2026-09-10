@@ -196,14 +196,20 @@ fun OsmMapView(
         }
     }
 
-    // Toggle map tiles when isDarkMap changes
+    // Toggle map tiles and theme when isDarkMap changes
     LaunchedEffect(isDarkMap) {
-        val tileSource = org.osmdroid.tileprovider.tilesource.XYTileSource(
-            if (isDarkMap) "CartoDBDarkMatter" else "CartoDBPositron",
-            0, 20, 256, ".png",
-            arrayOf(if (isDarkMap) "https://a.basemaps.cartocdn.com/dark_all/" else "https://a.basemaps.cartocdn.com/light_all/")
+        mapView.setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
+        val darkFilter = android.graphics.ColorMatrixColorFilter(
+            android.graphics.ColorMatrix(
+                floatArrayOf(
+                    -0.7f, 0f, 0f, 0f, 220f,
+                    0f, -0.7f, 0f, 0f, 230f,
+                    0f, 0f, -0.7f, 0f, 255f,
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
         )
-        mapView.setTileSource(tileSource)
+        mapView.overlayManager.tilesOverlay.setColorFilter(if (isDarkMap) darkFilter else null)
         mapView.invalidate()
     }
 
