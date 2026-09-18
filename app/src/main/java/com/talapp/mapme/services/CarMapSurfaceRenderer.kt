@@ -3,7 +3,8 @@ package com.talapp.mapme.services
 import android.content.Context
 import android.graphics.*
 import android.location.Location
-import android.util.LruCache
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import androidx.car.app.CarContext
 import androidx.car.app.SurfaceCallback
@@ -18,12 +19,13 @@ import com.talapp.mapme.data.WalkPoi
 import com.talapp.mapme.data.RouteConsolidator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.MapTileProviderBase
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.MapTileIndex
+import java.util.Locale
 import kotlin.math.*
 
 /**
@@ -47,7 +49,6 @@ class CarMapSurfaceRenderer(
     private val renderScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val renderMutex = Mutex()
     private val renderPending = AtomicBoolean(false)
-    private val inFlightTiles = ConcurrentHashMap.newKeySet<String>()
 
     // Camera / Map View State
     private var centerLat = 32.0853
@@ -65,24 +66,34 @@ class CarMapSurfaceRenderer(
     private var targetHeadingDegrees = 0f
     private var headingDegrees = 0f
 
-    // Tile Cache
-    private val tileCache = object : LruCache<String, Bitmap>(96) {
-        override fun sizeOf(key: String, bitmap: Bitmap): Int {
-            return bitmap.byteCount / 1024
+    // Active Navigation Route
+    private var activeNavRoute: NavRoute? = null
+
+    // Robust OSM Tile Provider (uses SQLite local caching, tile approximation, and shared offline tiles)
+    private val tileHandler = Handler(Looper.getMainLooper()) { msg ->
+        if (msg.what == MapTileProviderBase.MAPTILE_SUCCESS_ID) {
+            requestRender()
+        }
+        true
+    }
+
+    private val tileProvider: MapTileProviderBasic = run {
+        Configuration.getInstance().userAgentValue = carContext.packageName
+        MapTileProviderBasic(carContext, TileSourceFactory.MAPNIK).apply {
+            setTileRequestCompleteHandler(tileHandler)
         }
     }
-    private val diskCacheDir = File(carContext.cacheDir, "car_osmtiles").apply { mkdirs() }
 
     // Past walks cache
     private var pastWalks: List<Walk> = emptyList()
 
     // Paints
     private val bgPaint = Paint().apply {
-        color = Color.parseColor("#080D1A")
+        color = Color.parseColor("#0B132B") // Dark slate navy map base
         style = Paint.Style.FILL
     }
     private val gridPaint = Paint().apply {
-        color = Color.parseColor("#131C2E")
+        color = Color.parseColor("#1C2541")
         strokeWidth = 1.5f
         style = Paint.Style.STROKE
         isAntiAlias = true
@@ -101,6 +112,38 @@ class CarMapSurfaceRenderer(
         isAntiAlias = true
         isFilterBitmap = true
         colorFilter = darkMapFilter
+    }
+
+    // Navigation Route Paints
+    private val navGlowPaint = Paint().apply {
+        color = Color.parseColor("#8000E5FF") // Electric Cyan Neon Glow
+        strokeWidth = 22f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        isAntiAlias = true
+    }
+
+    private val navLinePaint = Paint().apply {
+        color = Color.parseColor("#FF00E5FF") // Vibrant solid Electric Cyan
+        strokeWidth = 10f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        isAntiAlias = true
+    }
+
+    private val destPinPaint = Paint().apply {
+        color = Color.parseColor("#EF4444")
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val destPinBorder = Paint().apply {
+        color = Color.WHITE
+        strokeWidth = 3f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
     }
 
     private val pastWalkPaint = Paint().apply {
@@ -269,7 +312,22 @@ class CarMapSurfaceRenderer(
             centerLon = lon
         }
 
+        session.updateNavigationProgress(lat, lon)
         requestRender()
+    }
+
+    fun setNavigationRoute(route: NavRoute?) {
+        activeNavRoute = route
+        requestRender()
+    }
+
+    fun getVehicleLocation(): Pair<Double, Double> = Pair(vehicleLat, vehicleLon)
+    fun hasLocation(): Boolean = hasLocationLock
+
+    fun detach() {
+        try {
+            tileProvider.detach()
+        } catch (_: Exception) {}
     }
 
     fun recenterOnVehicle() {
@@ -405,26 +463,29 @@ class CarMapSurfaceRenderer(
         // 2. Draw OpenStreetMap Tiles (Rotated & Scaled)
         drawOsmTiles(canvas, vx, vy, w, h, z)
 
-        // 3. Draw Past Recorded Drives & Heatmap (Rotated & Scaled)
+        // 3. Draw Active Planned Navigation Route (Rotated & Scaled)
+        drawNavigationRoute(canvas, vx, vy, z, worldRotation)
+
+        // 4. Draw Past Recorded Drives & Heatmap (Rotated & Scaled)
         drawPastWalks(canvas, vx, vy, z)
 
-        // 4. Draw Active Drive Path (Rotated & Scaled)
+        // 5. Draw Active Drive Path (Rotated & Scaled)
         drawActivePath(canvas, currentPoints, vx, vy, z)
 
-        // 5. Draw Active POIs (Rotated & Scaled)
+        // 6. Draw Active POIs (Rotated & Scaled)
         drawPois(canvas, session.activePois, vx, vy, worldRotation, z)
 
         canvas.restore()
 
-        // 6. Draw Vehicle Marker (Screen space at vx, vy)
+        // 7. Draw Vehicle Marker (Screen space at vx, vy)
         drawVehicleMarker(canvas, vx, vy, isHeadingUp)
 
         // --- Screen-Space Overlays (Unrotated for legibility) ---
 
-        // 7. Draw Compass Rose
+        // 8. Draw Compass Rose
         drawCompass(canvas, w, h, -headingDegrees)
 
-        // 8. Draw Real-Time Navigation Telemetry HUD
+        // 9. Draw Real-Time Navigation Telemetry HUD
         drawTelemetryHud(canvas, w, h)
     }
 
@@ -452,58 +513,64 @@ class CarMapSurfaceRenderer(
                 if (ty < 0 || ty >= maxTiles) continue
                 val normX = ((tx % maxTiles) + maxTiles) % maxTiles
 
-                val tileKey = "$z/$normX/$ty"
                 val tileLeft = (vx + (tx * 256.0 - centerPixelX)).toFloat()
                 val tileTop = (vy + (ty * 256.0 - centerPixelY)).toFloat()
 
-                val cached = tileCache.get(tileKey)
-                if (cached != null && !cached.isRecycled) {
-                    canvas.drawBitmap(cached, tileLeft, tileTop, tilePaint)
+                val tileIndex = MapTileIndex.getTileIndex(z, normX, ty)
+                val tileDrawable = tileProvider.getMapTile(tileIndex)
+                if (tileDrawable != null) {
+                    tileDrawable.setBounds(
+                        tileLeft.toInt(),
+                        tileTop.toInt(),
+                        (tileLeft + 256f).toInt(),
+                        (tileTop + 256f).toInt()
+                    )
+                    tileDrawable.colorFilter = darkMapFilter
+                    tileDrawable.draw(canvas)
                 } else {
                     canvas.drawRect(tileLeft, tileTop, tileLeft + 256f, tileTop + 256f, gridPaint)
-                    fetchTileAsync(z, normX, ty)
                 }
             }
         }
     }
 
-    private fun fetchTileAsync(z: Int, x: Int, y: Int) {
-        val key = "$z/$x/$y"
-        if (!inFlightTiles.add(key)) return
-        renderScope.launch(Dispatchers.IO) {
-            try {
-                val diskFile = File(diskCacheDir, "$z-$x-$y.png")
-                var bitmap: Bitmap? = null
-                if (diskFile.exists() && diskFile.length() > 0) {
-                    bitmap = BitmapFactory.decodeFile(diskFile.absolutePath)
-                    if (bitmap == null) {
-                        diskFile.delete()
-                    }
-                }
-                if (bitmap == null) {
-                    val url = URL("https://tile.openstreetmap.org/$z/$x/$y.png")
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "MapMe-AndroidAuto/4.3 (contact: mapme@talapp.com)")
-                    conn.connectTimeout = 5000
-                    conn.readTimeout = 5000
-                    if (conn.responseCode == 200) {
-                        val bytes = conn.inputStream.readBytes()
-                        if (bytes.isNotEmpty()) {
-                            diskFile.writeBytes(bytes)
-                            bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        }
-                    }
-                    conn.disconnect()
-                }
-                if (bitmap != null) {
-                    tileCache.put(key, bitmap)
-                    requestRender()
-                }
-            } catch (_: Exception) {
-            } finally {
-                inFlightTiles.remove(key)
+    private fun drawNavigationRoute(canvas: Canvas, vx: Float, vy: Float, z: Int, worldRotation: Float) {
+        val route = activeNavRoute ?: return
+        val wps = route.waypoints
+        if (wps.size < 2) return
+
+        val centerPixelX = lonToPixelX(centerLon, z)
+        val centerPixelY = latToPixelY(centerLat, z)
+
+        val path = Path()
+        var first = true
+        for (wp in wps) {
+            val px = (vx + (lonToPixelX(wp.second, z) - centerPixelX)).toFloat()
+            val py = (vy + (latToPixelY(wp.first, z) - centerPixelY)).toFloat()
+            if (first) {
+                path.moveTo(px, py)
+                first = false
+            } else {
+                path.lineTo(px, py)
             }
         }
+
+        // Draw outer glowing neon cyan stroke, then solid core line
+        canvas.drawPath(path, navGlowPaint)
+        canvas.drawPath(path, navLinePaint)
+
+        // Draw destination pin at final coordinate
+        val destWp = wps.last()
+        val dpx = (vx + (lonToPixelX(destWp.second, z) - centerPixelX)).toFloat()
+        val dpy = (vy + (latToPixelY(destWp.first, z) - centerPixelY)).toFloat()
+
+        canvas.save()
+        canvas.translate(dpx, dpy)
+        canvas.rotate(-worldRotation) // Keep pin icon upright for driver
+        canvas.drawCircle(0f, 0f, 22f, destPinPaint)
+        canvas.drawCircle(0f, 0f, 22f, destPinBorder)
+        canvas.drawText("🏁", 0f, 8f, poiTextPaint)
+        canvas.restore()
     }
 
     private fun drawPastWalks(canvas: Canvas, vx: Float, vy: Float, z: Int) {
@@ -688,9 +755,10 @@ class CarMapSurfaceRenderer(
         val isTracking = session.isTracking
         val points = session.currentPoints
         val isPaused = !isTracking && points.isNotEmpty()
+        val isNavigating = session.activeNavRoute != null
 
-        val hudW = 240f
-        val hudH = if (isTracking || isPaused) 100f else 68f
+        val hudW = if (isNavigating) 280f else 240f
+        val hudH = if (isTracking || isPaused || isNavigating) 100f else 68f
         val left = 20f
         val top = screenH - hudH - 24f
 
@@ -699,12 +767,14 @@ class CarMapSurfaceRenderer(
         canvas.drawRoundRect(rect, 18f, 18f, hudBorderPaint)
 
         val statusStr = when {
+            isNavigating -> "🧭 NAVIGATING"
             isTracking -> "🚗 DRIVE ACTIVE"
             isPaused -> "⏸️ PAUSED"
             else -> "● READY TO DRIVE"
         }
 
         val statusColor = when {
+            isNavigating -> Color.parseColor("#00E5FF") // Electric Cyan
             isTracking -> Color.parseColor("#22C55E") // Emerald Green
             isPaused -> Color.parseColor("#F59E0B") // Amber
             else -> Color.parseColor("#94A3B8") // Slate
@@ -722,7 +792,13 @@ class CarMapSurfaceRenderer(
         val speedStr = String.format(Locale.US, "%.0f km/h", speed)
         canvas.drawText(speedStr, left + 16f, top + 54f, textPaint)
 
-        if (isTracking || isPaused) {
+        if (isNavigating) {
+            val destTitle = session.activeNavRoute?.destinationTitle ?: "Destination"
+            val remDist = formatDistance(session.remainingNavDistanceMeters)
+            val remTime = formatDuration(session.remainingNavTimeSeconds)
+            val navStats = "$remDist  •  $remTime  •  ${destTitle.take(16)}"
+            canvas.drawText(navStats, left + 16f, top + 84f, subTextPaint)
+        } else if (isTracking || isPaused) {
             val distStr = formatDistance(session.totalDistanceMeters)
             val durStr = formatDuration(session.elapsedTimeSeconds)
             val tripStats = "$distStr  •  $durStr"

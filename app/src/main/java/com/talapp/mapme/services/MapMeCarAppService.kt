@@ -24,7 +24,9 @@ import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
-import androidx.car.app.navigation.model.NavigationTemplate
+import androidx.car.app.model.Distance
+import androidx.car.app.model.DateTimeWithZone
+import androidx.car.app.navigation.model.*
 import androidx.car.app.validation.HostValidator
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -165,6 +167,7 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
     override fun onDestroy(owner: LifecycleOwner) {
         sessionScope.cancel()
+        mapSurfaceRenderer?.detach()
         liveLocationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
@@ -249,6 +252,79 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
         locationService?.addPoi(tag, null)
         mapSurfaceRenderer?.requestRender()
     }
+
+    var activeNavRoute: NavRoute? = null
+        private set
+    var currentNavStepIndex: Int = 0
+        private set
+    var distanceToCurrentStepMeters: Double = 0.0
+        private set
+    var remainingNavDistanceMeters: Double = 0.0
+        private set
+    var remainingNavTimeSeconds: Long = 0L
+        private set
+
+    fun startNavigation(route: NavRoute) {
+        activeNavRoute = route
+        currentNavStepIndex = 0
+        distanceToCurrentStepMeters = route.steps.firstOrNull()?.distanceMeters ?: 0.0
+        remainingNavDistanceMeters = route.totalDistanceMeters
+        remainingNavTimeSeconds = route.totalDurationSeconds.toLong()
+
+        // Also automatically start tracking drive if not already recording
+        if (!isTracking) {
+            startTracking(isDrive = true)
+        }
+
+        mapSurfaceRenderer?.setNavigationRoute(route)
+        try {
+            carContext.getCarService(ScreenManager::class.java).top.invalidate()
+        } catch (_: Exception) {}
+    }
+
+    fun stopNavigation() {
+        activeNavRoute = null
+        currentNavStepIndex = 0
+        distanceToCurrentStepMeters = 0.0
+        remainingNavDistanceMeters = 0.0
+        remainingNavTimeSeconds = 0L
+
+        mapSurfaceRenderer?.setNavigationRoute(null)
+        try {
+            carContext.getCarService(ScreenManager::class.java).top.invalidate()
+        } catch (_: Exception) {}
+    }
+
+    fun updateNavigationProgress(currentLat: Double, currentLon: Double) {
+        val route = activeNavRoute ?: return
+        if (route.steps.isEmpty() || currentNavStepIndex >= route.steps.size) return
+
+        val currentStep = route.steps[currentNavStepIndex]
+        val results = FloatArray(1)
+        android.location.Location.distanceBetween(currentLat, currentLon, currentStep.latitude, currentStep.longitude, results)
+        val distToManeuver = results[0].toDouble()
+        distanceToCurrentStepMeters = distToManeuver
+
+        // Advance to next maneuver when within 35 meters
+        if (distToManeuver < 35.0 && currentNavStepIndex < route.steps.size - 1) {
+            currentNavStepIndex++
+        }
+
+        // Calculate remaining route distance
+        var remaining = 0.0
+        for (i in currentNavStepIndex until route.steps.size) {
+            remaining += route.steps[i].distanceMeters
+        }
+        remainingNavDistanceMeters = kotlin.math.max(distToManeuver, remaining)
+
+        // Estimated remaining time based on current speed or 40 km/h baseline
+        val speedMs = if (currentSpeedKmh > 5f) currentSpeedKmh / 3.6 else (40.0 / 3.6)
+        remainingNavTimeSeconds = (remainingNavDistanceMeters / speedMs).toLong().coerceAtLeast(10L)
+
+        try {
+            carContext.getCarService(ScreenManager::class.java).top.invalidate()
+        } catch (_: Exception) {}
+    }
 }
 
 /**
@@ -296,9 +372,18 @@ class MapMeCarMainScreen(
         val isTracking = session.isTracking
         val currentPoints = session.currentPoints
         val isPaused = !isTracking && currentPoints.isNotEmpty()
+        val isNavigating = session.activeNavRoute != null
 
-        // 1. Top Action Strip (Play / Pause / Stop / POI / History)
+        // 1. Top Action Strip
         val actionStripBuilder = ActionStrip.Builder()
+
+        val searchCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_search)
+        ).build()
+
+        val closeCarIcon = CarIcon.Builder(
+            IconCompat.createWithResource(carContext, R.drawable.ic_close)
+        ).build()
 
         val playCarIcon = CarIcon.Builder(
             IconCompat.createWithResource(carContext, R.drawable.ic_play_arrow)
@@ -320,9 +405,20 @@ class MapMeCarMainScreen(
             IconCompat.createWithResource(carContext, R.drawable.ic_history)
         ).build()
 
-        when {
-            isTracking -> {
-                // Active recording: Show Pause, Stop & Save, and POI
+        if (isNavigating) {
+            // Navigation mode active: End Nav, Pause/Resume, Stop, POI
+            actionStripBuilder.addAction(
+                Action.Builder()
+                    .setTitle("End Nav")
+                    .setIcon(closeCarIcon)
+                    .setOnClickListener {
+                        session.stopNavigation()
+                        CarToast.makeText(carContext, "Navigation stopped", CarToast.LENGTH_SHORT).show()
+                        invalidate()
+                    }
+                    .build()
+            )
+            if (isTracking) {
                 actionStripBuilder.addAction(
                     Action.Builder()
                         .setTitle("Pause")
@@ -334,29 +430,7 @@ class MapMeCarMainScreen(
                         }
                         .build()
                 )
-                actionStripBuilder.addAction(
-                    Action.Builder()
-                        .setTitle("Stop")
-                        .setIcon(stopCarIcon)
-                        .setOnClickListener {
-                            session.stopTracking()
-                            CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
-                            invalidate()
-                        }
-                        .build()
-                )
-                actionStripBuilder.addAction(
-                    Action.Builder()
-                        .setTitle("POI")
-                        .setIcon(poiCarIcon)
-                        .setOnClickListener {
-                            screenManager.push(CarMarkPoiScreen(carContext, session))
-                        }
-                        .build()
-                )
-            }
-            isPaused -> {
-                // Paused state: Show Resume, Stop & Save, and POI
+            } else {
                 actionStripBuilder.addAction(
                     Action.Builder()
                         .setTitle("Resume")
@@ -368,49 +442,129 @@ class MapMeCarMainScreen(
                         }
                         .build()
                 )
-                actionStripBuilder.addAction(
-                    Action.Builder()
-                        .setTitle("Stop")
-                        .setIcon(stopCarIcon)
-                        .setOnClickListener {
-                            session.stopTracking()
-                            CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
-                            invalidate()
-                        }
-                        .build()
-                )
-                actionStripBuilder.addAction(
-                    Action.Builder()
-                        .setTitle("POI")
-                        .setIcon(poiCarIcon)
-                        .setOnClickListener {
-                            screenManager.push(CarMarkPoiScreen(carContext, session))
-                        }
-                        .build()
-                )
             }
-            else -> {
-                // Idle / Ready state: Show Drive (Play) and History
-                actionStripBuilder.addAction(
-                    Action.Builder()
-                        .setTitle("Drive")
-                        .setIcon(playCarIcon)
-                        .setOnClickListener {
-                            session.startTracking(isDrive = true)
-                            CarToast.makeText(carContext, "🚗 Drive tracking started!", CarToast.LENGTH_SHORT).show()
-                            invalidate()
-                        }
-                        .build()
-                )
-                actionStripBuilder.addAction(
-                    Action.Builder()
-                        .setTitle("History")
-                        .setIcon(historyCarIcon)
-                        .setOnClickListener {
-                            screenManager.push(CarTripListScreen(carContext, session))
-                        }
-                        .build()
-                )
+            actionStripBuilder.addAction(
+                Action.Builder()
+                    .setTitle("Stop")
+                    .setIcon(stopCarIcon)
+                    .setOnClickListener {
+                        session.stopTracking()
+                        session.stopNavigation()
+                        CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
+                        invalidate()
+                    }
+                    .build()
+            )
+            actionStripBuilder.addAction(
+                Action.Builder()
+                    .setTitle("POI")
+                    .setIcon(poiCarIcon)
+                    .setOnClickListener {
+                        screenManager.push(CarMarkPoiScreen(carContext, session))
+                    }
+                    .build()
+            )
+        } else {
+            // Free drive / Map mode
+            actionStripBuilder.addAction(
+                Action.Builder()
+                    .setTitle("Search")
+                    .setIcon(searchCarIcon)
+                    .setOnClickListener {
+                        screenManager.push(CarSearchDestinationScreen(carContext, session))
+                    }
+                    .build()
+            )
+
+            when {
+                isTracking -> {
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("Pause")
+                            .setIcon(pauseCarIcon)
+                            .setOnClickListener {
+                                session.pauseTracking()
+                                CarToast.makeText(carContext, "Recording paused", CarToast.LENGTH_SHORT).show()
+                                invalidate()
+                            }
+                            .build()
+                    )
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("Stop")
+                            .setIcon(stopCarIcon)
+                            .setOnClickListener {
+                                session.stopTracking()
+                                CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
+                                invalidate()
+                            }
+                            .build()
+                    )
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("POI")
+                            .setIcon(poiCarIcon)
+                            .setOnClickListener {
+                                screenManager.push(CarMarkPoiScreen(carContext, session))
+                            }
+                            .build()
+                    )
+                }
+                isPaused -> {
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("Resume")
+                            .setIcon(playCarIcon)
+                            .setOnClickListener {
+                                session.startTracking(isDrive = true)
+                                CarToast.makeText(carContext, "🚗 Recording resumed", CarToast.LENGTH_SHORT).show()
+                                invalidate()
+                            }
+                            .build()
+                    )
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("Stop")
+                            .setIcon(stopCarIcon)
+                            .setOnClickListener {
+                                session.stopTracking()
+                                CarToast.makeText(carContext, "Trip saved to MapMe!", CarToast.LENGTH_LONG).show()
+                                invalidate()
+                            }
+                            .build()
+                    )
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("POI")
+                            .setIcon(poiCarIcon)
+                            .setOnClickListener {
+                                screenManager.push(CarMarkPoiScreen(carContext, session))
+                            }
+                            .build()
+                    )
+                }
+                else -> {
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("Drive")
+                            .setIcon(playCarIcon)
+                            .setOnClickListener {
+                                session.startTracking(isDrive = true)
+                                CarToast.makeText(carContext, "🚗 Drive tracking started!", CarToast.LENGTH_SHORT).show()
+                                invalidate()
+                            }
+                            .build()
+                    )
+                    actionStripBuilder.addAction(
+                        Action.Builder()
+                            .setTitle("History")
+                            .setIcon(historyCarIcon)
+                            .setOnClickListener {
+                                screenManager.push(CarTripListScreen(carContext, session))
+                            }
+                            .build()
+                    )
+                }
             }
         }
 
@@ -447,10 +601,60 @@ class MapMeCarMainScreen(
             )
             .build()
 
-        return NavigationTemplate.Builder()
+        val templateBuilder = NavigationTemplate.Builder()
             .setActionStrip(actionStripBuilder.build())
             .setMapActionStrip(mapActionStrip)
-            .build()
+
+        if (isNavigating) {
+            val route = session.activeNavRoute!!
+            val currentStep = route.steps.getOrNull(session.currentNavStepIndex) ?: route.steps.last()
+            val nextStep = route.steps.getOrNull(session.currentNavStepIndex + 1)
+
+            val stepBuilder = Step.Builder()
+                .setCue(currentStep.cue)
+                .setRoad(currentStep.road)
+                .setManeuver(Maneuver.Builder(currentStep.maneuverType).build())
+
+            val curDistM = session.distanceToCurrentStepMeters
+            val currentDistance = if (curDistM < 1000) {
+                Distance.create(curDistM.coerceAtLeast(0.0), Distance.UNIT_METERS)
+            } else {
+                Distance.create((curDistM / 1000.0).coerceAtLeast(0.0), Distance.UNIT_KILOMETERS)
+            }
+
+            val routingInfoBuilder = RoutingInfo.Builder()
+                .setCurrentStep(stepBuilder.build(), currentDistance)
+
+            if (nextStep != null) {
+                val nextStepObj = Step.Builder()
+                    .setCue(nextStep.cue)
+                    .setRoad(nextStep.road)
+                    .setManeuver(Maneuver.Builder(nextStep.maneuverType).build())
+                    .build()
+                routingInfoBuilder.setNextStep(nextStepObj)
+            }
+
+            val remDistM = session.remainingNavDistanceMeters
+            val remainingDist = if (remDistM < 1000) {
+                Distance.create(remDistM.coerceAtLeast(0.0), Distance.UNIT_METERS)
+            } else {
+                Distance.create((remDistM / 1000.0).coerceAtLeast(0.0), Distance.UNIT_KILOMETERS)
+            }
+
+            val arrivalTime = DateTimeWithZone.create(
+                System.currentTimeMillis() + session.remainingNavTimeSeconds * 1000L,
+                java.util.TimeZone.getDefault()
+            )
+
+            val travelEstimate = TravelEstimate.Builder(remainingDist, arrivalTime)
+                .setRemainingTimeSeconds(session.remainingNavTimeSeconds)
+                .build()
+
+            templateBuilder.setNavigationInfo(routingInfoBuilder.build())
+            templateBuilder.setDestinationTravelEstimate(travelEstimate)
+        }
+
+        return templateBuilder.build()
     }
 
     private fun buildSafeFallback(): Template {
