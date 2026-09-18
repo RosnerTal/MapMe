@@ -48,7 +48,7 @@ data class NavRoute(
 object NavigationEngine {
 
     private const val TAG = "NavigationEngine"
-    private const val USER_AGENT = "MapMe-AndroidAuto/4.5 (talapp.com)"
+    private const val USER_AGENT = "MapMe-AndroidAuto/4.6 (talapp.com)"
 
     /**
      * Search destinations worldwide or locally using Photon Geocoding API.
