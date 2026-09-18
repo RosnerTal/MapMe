@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MapMe - Online Viewer</title>
+    <title>MapMe - Route Visualizer & Corridors</title>
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Leaflet CSS -->
@@ -20,11 +20,14 @@
     <div id="auth-screen" class="screen-container active">
         <div class="auth-card glass-panel">
             <div class="auth-header">
-                <div class="logo-badge">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="logo-icon"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                <div class="logo-badge-3d">
+                    <img src="mapme-logo.png" alt="MapMe 3D Pin" class="brand-logo-img">
                 </div>
-                <h1>MapMe</h1>
-                <p>Sign in to view your walking routes online</p>
+                <div class="brand-title-row">
+                    <h1>MapMe</h1>
+                    <span class="version-badge">v4.7</span>
+                </div>
+                <p>Personal location logger, spatial corridor deduplication & interactive trip explorer.</p>
             </div>
             
             <div class="auth-actions">
@@ -36,7 +39,7 @@
                 <div class="divider"><span>OR</span></div>
                 
                 <button id="guest-signin-btn" class="btn btn-secondary">
-                    Continue as Guest / Local Test
+                    Continue as Guest / Local Preview
                 </button>
             </div>
         </div>
@@ -46,20 +49,21 @@
     <!-- Dashboard Screen -->
     <!-- -------------------------------------------------- -->
     <div id="dashboard-screen" class="screen-container">
-        <!-- Header -->
+        <!-- Top Navigation Header -->
         <header class="header glass-panel">
             <div class="header-logo">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="logo-icon-sm"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                <img src="mapme-logo.png" alt="MapMe Logo" class="header-logo-img">
                 <h2>MapMe</h2>
+                <span class="version-badge header-version">v4.7</span>
             </div>
             
             <div class="user-profile">
-                <button id="map-theme-btn" class="btn-icon" title="Toggle Map Theme" style="margin-right: 8px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="logout-icon" id="theme-icon-svg" style="width: 20px; height: 20px;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                <button id="map-theme-btn" class="btn-icon" title="Toggle Map Theme">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="theme-icon-svg" style="width: 20px; height: 20px;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
                 </button>
                 <div id="user-info">
-                    <span id="user-name">Guest User</span>
-                    <span id="user-email">guest@mapme.local</span>
+                    <span id="user-name">Explorer</span>
+                    <span id="user-email">syncing...</span>
                 </div>
                 <img id="user-avatar" src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&h=100&q=80" alt="Avatar">
                 <button id="signout-btn" class="btn-icon btn-icon-danger" title="Sign Out">
@@ -68,15 +72,20 @@
             </div>
         </header>
 
-        <!-- Timeframe Selector -->
-        <section class="timeframe-row glass-panel" style="margin-bottom: 16px; padding: 4px; display: flex; gap: 4px;">
-            <button id="timeframe-week-btn" class="timeframe-btn active" style="flex: 1; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13.5px; font-family: 'Outfit', sans-serif;">1 Week</button>
-            <button id="timeframe-month-btn" class="timeframe-btn" style="flex: 1; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13.5px; font-family: 'Outfit', sans-serif;">1 Month</button>
-            <button id="timeframe-three-btn" class="timeframe-btn" style="flex: 1; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13.5px; font-family: 'Outfit', sans-serif;">3 Months</button>
-            <button id="timeframe-lifetime-btn" class="timeframe-btn" style="flex: 1; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13.5px; font-family: 'Outfit', sans-serif;">Lifetime</button>
+        <!-- Timeframe Selector Tabs -->
+        <section class="timeframe-row glass-panel">
+            <button id="timeframe-week-btn" class="timeframe-btn active">1 Week</button>
+            <button id="timeframe-month-btn" class="timeframe-btn">1 Month</button>
+            <button id="timeframe-three-btn" class="timeframe-btn">3 Months</button>
+            <button id="timeframe-lifetime-btn" class="timeframe-btn">Lifetime</button>
         </section>
 
-        <!-- Stats Overview -->
+        <!-- Spatial Corridor Showcase Banner -->
+        <div id="corridor-banner" class="corridor-banner glass-panel hidden">
+            <!-- Dynamically populated -->
+        </div>
+
+        <!-- Top Overview Stats Cards -->
         <section class="stats-row">
             <div class="stat-card glass-panel border-cyan">
                 <div class="stat-icon-wrapper cyan">
@@ -102,73 +111,113 @@
                 </div>
                 <div class="stat-content">
                     <span class="stat-label">Total Duration</span>
-                    <h3 id="stat-duration">0s</h3>
+                    <h3 id="stat-duration">00:00</h3>
                 </div>
             </div>
         </section>
 
-        <!-- Main Body -->
+        <!-- Main Content Area -->
         <main class="dashboard-body">
-            <!-- Left Panel: Walks list -->
+            <!-- Left Sidebar: Filter Switches and Walks List -->
             <aside class="sidebar glass-panel">
-                <div class="sidebar-header" style="display: flex; flex-direction: column; gap: 10px; align-items: flex-start;">
-                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                        <span style="font-size: 13.5px; font-weight: 600; color: var(--text-secondary);">Show All History</span>
-                        <label class="switch">
-                            <input type="checkbox" id="show-all-walks-cb" checked>
-                            <span class="slider round"></span>
-                        </label>
+                <div class="sidebar-header">
+                    <div class="sidebar-title-row">
+                        <h4>Activity History</h4>
                     </div>
-                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 4px;">
-                        <span style="font-size: 13.5px; font-weight: 600; color: #06b6d4;">Show Walks (&lt;7 km/h)</span>
-                        <label class="switch">
-                            <input type="checkbox" id="show-walks-cb" checked>
-                            <span class="slider round" style="background-color: #06b6d433;"></span>
-                        </label>
-                    </div>
-                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 4px;">
-                        <span style="font-size: 13.5px; font-weight: 600; color: #ff3b30;">Show Drives (7+ km/h)</span>
-                        <label class="switch">
-                            <input type="checkbox" id="show-drives-cb" checked>
-                            <span class="slider round" style="background-color: #ff3b3033;"></span>
-                        </label>
-                    </div>
-                    <div class="toggle-wrapper" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 4px;">
-                        <span style="font-size: 13.5px; font-weight: 600; color: #8b5cf6;">Show POIs (Markers)</span>
-                        <label class="switch">
-                            <input type="checkbox" id="show-pois-cb" checked>
-                            <span class="slider round" style="background-color: #8b5cf633;"></span>
-                        </label>
+
+                    <div class="filters-grid">
+                        <div class="toggle-row">
+                            <span class="toggle-label text-slate">All Corridors</span>
+                            <label class="switch">
+                                <input type="checkbox" id="show-all-walks-cb" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        <div class="toggle-row">
+                            <span class="toggle-label text-cyan">Walks (&lt;7 km/h)</span>
+                            <label class="switch">
+                                <input type="checkbox" id="show-walks-cb" checked>
+                                <span class="slider round slider-cyan"></span>
+                            </label>
+                        </div>
+                        <div class="toggle-row">
+                            <span class="toggle-label text-red">Drives (7+ km/h)</span>
+                            <label class="switch">
+                                <input type="checkbox" id="show-drives-cb" checked>
+                                <span class="slider round slider-red"></span>
+                            </label>
+                        </div>
+                        <div class="toggle-row">
+                            <span class="toggle-label text-violet">POIs & Markers</span>
+                            <label class="switch">
+                                <input type="checkbox" id="show-pois-cb" checked>
+                                <span class="slider round slider-violet"></span>
+                            </label>
+                        </div>
                     </div>
                 </div>
+
                 <div id="walks-list" class="walks-list">
-                    <!-- Loaded dynamically -->
-                    <div class="empty-state">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-icon"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
-                        <p>No walks uploaded yet</p>
+                    <!-- Dynamically populated with walk cards -->
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <p>Syncing tracks...</p>
                     </div>
                 </div>
             </aside>
 
-            <!-- Right Panel: Map viewer -->
+            <!-- Right Map Viewer Container -->
             <section class="map-container glass-panel">
                 <div id="map"></div>
-                <!-- Mini Stats Overlay on Map -->
+
+                <!-- Interactive Trip Details & Analytics Overlay Card -->
                 <div id="map-stats-card" class="map-stats-card glass-panel hidden">
-                    <h5 id="map-walk-title">Walk Details</h5>
+                    <div class="stats-card-header">
+                        <div class="stats-title-group">
+                            <span id="map-walk-badge" class="mode-pill walk">WALK</span>
+                            <h5 id="map-walk-title">Route Analytics</h5>
+                        </div>
+                        <button id="close-stats-btn" class="close-stats-btn" title="Deselect track">&times;</button>
+                    </div>
+
+                    <!-- 2x3 Metrics Grid -->
                     <div class="map-stats-grid">
-                        <div>
+                        <div class="stat-box">
                             <span class="label">DISTANCE</span>
-                            <span id="map-walk-distance" class="value">0 m</span>
+                            <span id="map-walk-distance" class="value text-cyan">0 m</span>
                         </div>
-                        <div>
+                        <div class="stat-box">
                             <span class="label">DURATION</span>
-                            <span id="map-walk-duration" class="value">0s</span>
+                            <span id="map-walk-duration" class="value text-violet">00:00</span>
                         </div>
-                        <div>
+                        <div class="stat-box">
                             <span class="label">AVG SPEED</span>
-                            <span id="map-walk-speed" class="value">0 km/h</span>
+                            <span id="map-walk-speed" class="value text-emerald">0.0 km/h</span>
                         </div>
+                        <div class="stat-box">
+                            <span class="label">TOP SPEED</span>
+                            <span id="map-walk-max-speed" class="value text-orange">0.0 km/h</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="label">RECORDED ON</span>
+                            <span id="map-walk-date" class="value text-date">--</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="label">DENSITY</span>
+                            <span id="map-walk-points" class="value text-slate">0 pts</span>
+                        </div>
+                    </div>
+
+                    <!-- Export Action Buttons -->
+                    <div class="stats-actions">
+                        <button id="export-gpx-btn" class="btn-action btn-gpx" title="Export standardized GPX 1.1 file">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Export GPX
+                        </button>
+                        <button id="export-kml-btn" class="btn-action btn-kml" title="Export Google Earth KML 2.2 file">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                            Export KML
+                        </button>
                     </div>
                 </div>
             </section>
@@ -178,13 +227,13 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     
-    <!-- Image Lightbox Modal -->
+    <!-- Full-Screen Image Lightbox Modal -->
     <div id="lightbox-modal" class="lightbox-modal">
-        <span class="lightbox-close">&times;</span>
+        <span class="lightbox-close" title="Close Preview">&times;</span>
         <img class="lightbox-content" id="lightbox-img" alt="POI Fullscreen Preview">
     </div>
 
-    <!-- Custom JS (Firebase & App logic) -->
+    <!-- Modular ES6 Application Entry Point -->
     <script type="module" src="app.js"></script>
 </body>
 </html>
