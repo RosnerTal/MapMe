@@ -1,7 +1,9 @@
 package com.talapp.mapme.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,24 +59,18 @@ fun LoginScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Box(
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.talapp.mapme.R.mipmap.ic_launcher),
+                    contentDescription = "MapMe Logo",
                     modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(NeonCyan, ElectricViolet)
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.LocationOn,
-                        contentDescription = "MapMe Logo",
-                        tint = Color.White,
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(
+                            1.5.dp,
+                            Brush.linearGradient(listOf(NeonCyan, ElectricViolet)),
+                            RoundedCornerShape(20.dp)
+                        )
+                )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
