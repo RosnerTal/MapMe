@@ -20,3 +20,14 @@ val GlassBackground = Color(0x801E293B)
 val GlassBorder = Color(0x2BFFFFFF)
 val DarkOverlay = Color(0xCC0F172A)
 
+// Cyberpunk & Showcase Glassmorphism Colors
+val CyberDark = Color(0xFF080D1A)
+val CyberNavy = Color(0xFF0B132B)
+val DriveCoral = Color(0xFFEF4444)
+val AmberGold = Color(0xFFF59E0B)
+val ElectricCyanBright = Color(0xFF00E5FF)
+val GlassCardBg = Color(0xE60F172A)
+val GlassCardBorder = Color(0x3338BDF8)
+val GlassCardBorderCyan = Color(0x4D00E5FF)
+
+

@@ -57,6 +57,112 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.core.content.FileProvider
+import android.content.Intent
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+
+// GPX & KML Export Helpers
+fun exportGpx(context: Context, walk: Walk, points: List<WalkPoint>, pois: List<WalkPoi>) {
+    try {
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        val sb = StringBuilder()
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        sb.append("<gpx version=\"1.1\" creator=\"MapMe\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
+        sb.append("  <metadata>\n")
+        sb.append("    <name>${walk.title.replace("&", "&amp;").replace("<", "&lt;")}</name>\n")
+        sb.append("    <time>${isoFormat.format(Date(walk.startTime))}</time>\n")
+        sb.append("  </metadata>\n")
+        for (poi in pois) {
+            val name = (poi.text ?: "Waypoint").replace("&", "&amp;").replace("<", "&lt;")
+            sb.append("  <wpt lat=\"${poi.latitude}\" lon=\"${poi.longitude}\">\n")
+            sb.append("    <name>$name</name>\n")
+            sb.append("    <time>${isoFormat.format(Date(poi.timestamp))}</time>\n")
+            sb.append("  </wpt>\n")
+        }
+        sb.append("  <trk>\n")
+        sb.append("    <name>${walk.title.replace("&", "&amp;").replace("<", "&lt;")}</name>\n")
+        sb.append("    <trkseg>\n")
+        for (pt in points) {
+            sb.append("      <trkpt lat=\"${pt.latitude}\" lon=\"${pt.longitude}\">\n")
+            sb.append("        <time>${isoFormat.format(Date(pt.timestamp))}</time>\n")
+            sb.append("        <speed>${pt.speed}</speed>\n")
+            sb.append("      </trkpt>\n")
+        }
+        sb.append("    </trkseg>\n")
+        sb.append("  </trk>\n")
+        sb.append("</gpx>\n")
+
+        val safeTitle = walk.title.replace("[^a-zA-Z0-9_-]".toRegex(), "_")
+        val file = File(context.cacheDir, "${safeTitle}_${walk.id}.gpx")
+        file.writeText(sb.toString())
+
+        val uri = FileProvider.getUriForFile(context, "com.talapp.mapme.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/gpx+xml"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "MapMe Route: ${walk.title}")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Export GPX Route"))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Export error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun exportKml(context: Context, walk: Walk, points: List<WalkPoint>, pois: List<WalkPoi>) {
+    try {
+        val sb = StringBuilder()
+        val title = walk.title.replace("&", "&amp;").replace("<", "&lt;")
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        sb.append("<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n")
+        sb.append("  <Document>\n")
+        sb.append("    <name>$title</name>\n")
+        sb.append("    <Placemark>\n")
+        sb.append("      <name>$title Route</name>\n")
+        sb.append("      <LineString>\n")
+        sb.append("        <tessellate>1</tessellate>\n")
+        sb.append("        <coordinates>\n")
+        val coords = points.joinToString("\n") { "          ${it.longitude},${it.latitude},0" }
+        sb.append(coords)
+        sb.append("\n        </coordinates>\n")
+        sb.append("      </LineString>\n")
+        sb.append("    </Placemark>\n")
+        for (poi in pois) {
+            val poiName = (poi.text ?: "Waypoint").replace("&", "&amp;").replace("<", "&lt;")
+            sb.append("    <Placemark>\n")
+            sb.append("      <name>$poiName</name>\n")
+            sb.append("      <Point>\n")
+            sb.append("        <coordinates>${poi.longitude},${poi.latitude},0</coordinates>\n")
+            sb.append("      </Point>\n")
+            sb.append("    </Placemark>\n")
+        }
+        sb.append("  </Document>\n")
+        sb.append("</kml>\n")
+
+        val safeTitle = walk.title.replace("[^a-zA-Z0-9_-]".toRegex(), "_")
+        val file = File(context.cacheDir, "${safeTitle}_${walk.id}.kml")
+        file.writeText(sb.toString())
+
+        val uri = FileProvider.getUriForFile(context, "com.talapp.mapme.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/vnd.google-earth.kml+xml"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "MapMe Route: ${walk.title}")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Export KML Route"))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Export error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
 
 // Formatting Utilities
 fun formatTime(millis: Long): String {
@@ -1252,6 +1358,7 @@ fun RecordScreen(
     
     var showAddPoiDialog by remember { mutableStateOf(false) }
     var selectedPoi by remember { mutableStateOf<WalkPoi?>(null) }
+    var showFilters by remember { mutableStateOf(false) }
     
     val showWalks by viewModel.showWalks.collectAsState()
     val showDrives by viewModel.showDrives.collectAsState()
@@ -1281,14 +1388,14 @@ fun RecordScreen(
             isDriveRecording = isDrive
         )
 
-        // Top Floating Control Bar: Back Button + Stats HUD + Map Style Toggle (Row layout - NO overlaps!)
+        // Top Floating Control Bar: Back Button + Status Badge + Map Style Toggle
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Floating Back Button
@@ -1309,59 +1416,39 @@ fun RecordScreen(
                 )
             }
 
-            // Glassmorphic Stats Overlay (Center HUD)
+            // Glassmorphic Status Badge (Pill)
             Card(
-                modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = GlassBackground),
+                colors = CardDefaults.cardColors(containerColor = GlassCardBg),
                 shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, GlassBorder)
+                border = BorderStroke(1.dp, if (isDrive) GlassCardBorder else GlassCardBorderCyan)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Duration
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("DURATION", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = formatTime(durationSeconds * 1000),
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    val statusDotColor = when {
+                        !isTracking -> AmberGold
+                        isDrive -> DriveCoral
+                        else -> NeonCyan
                     }
-
-                    // Divider
-                    Box(modifier = Modifier.width(1.dp).height(20.dp).background(GlassBorder))
-
-                    // Distance
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("DISTANCE", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = formatDistance(distance),
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // Divider
-                    Box(modifier = Modifier.width(1.dp).height(20.dp).background(GlassBorder))
-
-                    // Speed
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("SPEED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
-                        val speed = currentLoc?.speed ?: 0f
-                        Text(
-                            text = formatSpeed(speed),
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(statusDotColor)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = when {
+                            !isTracking -> "PAUSED"
+                            isDrive -> "🚗 ACTIVE DRIVE"
+                            else -> "🚶 ACTIVE WALK"
+                        },
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.6.sp
+                    )
                 }
             }
 
@@ -1384,107 +1471,109 @@ fun RecordScreen(
             }
         }
 
-        // Floating Controls on Right Side (Filters Panel + Add POI Button in a vertical column, neatly spaced)
+        // Floating Filter Toggle & Panel (Top Right, below style button)
         Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
-                .padding(top = 68.dp, end = 16.dp),
+                .padding(top = 64.dp, end = 16.dp),
             horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Speed Filters Panel
-            Card(
-                modifier = Modifier.width(136.dp),
-                colors = CardDefaults.cardColors(containerColor = GlassBackground),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, GlassBorder)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(GlassBackground)
+                    .border(1.dp, GlassBorder, CircleShape)
+                    .clickable { showFilters = !showFilters },
+                contentAlignment = Alignment.Center
             ) {
-                Column(
-                    modifier = Modifier.padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "FILTERS",
-                        color = TextGray,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.clickable { viewModel.toggleShowWalks() }
-                    ) {
-                        Checkbox(
-                            checked = showWalks,
-                            onCheckedChange = { viewModel.toggleShowWalks() },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = NeonCyan,
-                                uncheckedColor = TextGray,
-                                checkmarkColor = Color.Black
-                            ),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text("Walks (<7)", color = Color.White, fontSize = 11.sp)
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.clickable { viewModel.toggleShowDrives() }
-                    ) {
-                        Checkbox(
-                            checked = showDrives,
-                            onCheckedChange = { viewModel.toggleShowDrives() },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = Color(0xFFEF4444),
-                                uncheckedColor = TextGray,
-                                checkmarkColor = Color.White
-                            ),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text("Drives (7+)", color = Color.White, fontSize = 11.sp)
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.clickable { viewModel.toggleShowPois() }
-                    ) {
-                        Checkbox(
-                            checked = showPois,
-                            onCheckedChange = { viewModel.toggleShowPois() },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = ElectricViolet,
-                                uncheckedColor = TextGray,
-                                checkmarkColor = Color.White
-                            ),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text("POIs (Markers)", color = Color.White, fontSize = 11.sp)
-                    }
-                }
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = "Filters",
+                    tint = if (showFilters) NeonCyan else TextGray,
+                    modifier = Modifier.size(18.dp)
+                )
             }
 
-            // Floating Add POI Button (placed below filters, NEVER overlapping!)
-            if (isTracking && points.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(GlassBackground)
-                        .border(1.dp, GlassBorder, CircleShape)
-                        .clickable { showAddPoiDialog = true },
-                    contentAlignment = Alignment.Center
+            AnimatedVisibility(
+                visible = showFilters,
+                enter = fadeIn() + androidx.compose.animation.slideInVertically(),
+                exit = fadeOut() + androidx.compose.animation.slideOutVertically()
+            ) {
+                Card(
+                    modifier = Modifier.width(136.dp),
+                    colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, GlassBorder)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AddLocation,
-                        contentDescription = "Add Point of Interest",
-                        tint = NeonCyan,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "FILTERS",
+                            color = TextGray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.clickable { viewModel.toggleShowWalks() }
+                        ) {
+                            Checkbox(
+                                checked = showWalks,
+                                onCheckedChange = { viewModel.toggleShowWalks() },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = NeonCyan,
+                                    uncheckedColor = TextGray,
+                                    checkmarkColor = Color.Black
+                                ),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text("Walks (<7)", color = Color.White, fontSize = 11.sp)
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.clickable { viewModel.toggleShowDrives() }
+                        ) {
+                            Checkbox(
+                                checked = showDrives,
+                                onCheckedChange = { viewModel.toggleShowDrives() },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = Color(0xFFEF4444),
+                                    uncheckedColor = TextGray,
+                                    checkmarkColor = Color.White
+                                ),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text("Drives (7+)", color = Color.White, fontSize = 11.sp)
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.clickable { viewModel.toggleShowPois() }
+                        ) {
+                            Checkbox(
+                                checked = showPois,
+                                onCheckedChange = { viewModel.toggleShowPois() },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = ElectricViolet,
+                                    uncheckedColor = TextGray,
+                                    checkmarkColor = Color.White
+                                ),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text("POIs (Markers)", color = Color.White, fontSize = 11.sp)
+                        }
+                    }
                 }
             }
         }
@@ -1504,152 +1593,264 @@ fun RecordScreen(
             onDismiss = { selectedPoi = null }
         )
 
-        // Controls overlay card (Bottom Center)
+        // Bottom-Left Live Telemetry HUD Card
         AnimatedVisibility(
             visible = selectedPoi == null,
-            enter = fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { it }),
-            exit = fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { it }),
+            enter = fadeIn() + androidx.compose.animation.slideInHorizontally(initialOffsetX = { -it }),
+            exit = fadeOut() + androidx.compose.animation.slideOutHorizontally(targetOffsetX = { -it }),
             modifier = Modifier
-                .align(Alignment.BottomCenter)
+                .align(Alignment.BottomStart)
                 .navigationBarsPadding()
-                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
-                .fillMaxWidth()
+                .padding(bottom = 20.dp, start = 16.dp)
+                .width(185.dp)
         ) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = GlassBackground),
-                shape = RoundedCornerShape(24.dp),
-                border = BorderStroke(1.dp, GlassBorder),
-                modifier = Modifier.fillMaxWidth()
+                colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, GlassCardBorderCyan)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // Tracking Status Bar
+                Column(modifier = Modifier.padding(14.dp)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        modifier = Modifier.padding(bottom = 10.dp)
                     ) {
-                        // Pulsing green/cyan indicator
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
+                                .size(7.dp)
                                 .clip(CircleShape)
-                                .background(if (isTracking) NeonCyan else Color.Gray)
+                                .background(NeonCyan)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isTracking) "ACTIVE RECORDING" else "PAUSED",
-                            color = if (isTracking) NeonCyan else TextGray,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
+                            text = "LIVE TELEMETRY",
+                            color = NeonCyan,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.2.sp
                         )
                     }
 
-                    // Buttons Panel
+                    // Speed Readout
+                    val speed = currentLoc?.speed ?: 0f
+                    val speedKmh = speed * 3.6f
+                    Text("CURRENT SPEED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Bottom,
+                        modifier = Modifier.padding(top = 1.dp)
                     ) {
-                        // 1. Toggle tracking Pause / Resume / Start
-                        if (isTracking) {
-                            // Pause Button
-                            IconButtonControl(
-                                onClick = { viewModel.pauseWalk() },
-                                icon = Icons.Default.Pause,
-                                contentDescription = "Pause",
-                                backgroundColor = ElectricViolet
-                            )
-                        } else {
-                            // Resume/Start Button
-                            IconButtonControl(
-                                onClick = { viewModel.startWalk(isDrive) },
-                                icon = Icons.Default.PlayArrow,
-                                contentDescription = "Resume",
-                                backgroundColor = NeonCyan
-                            )
-                        }
-
-                        // Waze integration quick launch button (Visible when recording a Drive)
-                        if (isDrive) {
-                            val context = androidx.compose.ui.platform.LocalContext.current
-                            IconButtonControl(
-                                onClick = {
-                                    // Start tracking if paused
-                                    if (!isTracking) {
-                                        viewModel.startWalk(true)
-                                    }
-                                    try {
-                                        val intent = android.content.Intent(
-                                            android.content.Intent.ACTION_VIEW,
-                                            android.net.Uri.parse("waze://?navigate=yes")
-                                        ).apply {
-                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        }
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {
-                                        // Waze not installed, fallback to play store or display toast
-                                        try {
-                                            val intent = android.content.Intent(
-                                                android.content.Intent.ACTION_VIEW,
-                                                android.net.Uri.parse("market://details?id=com.waze")
-                                            )
-                                            context.startActivity(intent)
-                                        } catch (e2: Exception) {}
-                                    }
-                                },
-                                icon = Icons.Default.DirectionsCar,
-                                contentDescription = "Launch Waze",
-                                backgroundColor = Color(0xFF33CCFF) // Waze blue accent
-                            )
-
-                            IconButtonControl(
-                                onClick = {
-                                    // Start tracking if paused
-                                    if (!isTracking) {
-                                        viewModel.startWalk(true)
-                                    }
-                                    try {
-                                        val intent = android.content.Intent(
-                                            android.content.Intent.ACTION_VIEW,
-                                            android.net.Uri.parse("google.navigation:mode=d")
-                                        ).apply {
-                                            setPackage("com.google.android.apps.maps")
-                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        }
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {
-                                        try {
-                                            val intent = android.content.Intent(
-                                                android.content.Intent.ACTION_VIEW,
-                                                android.net.Uri.parse("market://details?id=com.google.android.apps.maps")
-                                            )
-                                            context.startActivity(intent)
-                                        } catch (e2: Exception) {}
-                                    }
-                                },
-                                icon = Icons.Default.Map,
-                                contentDescription = "Launch Google Maps",
-                                backgroundColor = Color(0xFF34A853) // Google Green accent
-                            )
-                        }
-
-                        // 2. Stop Button (Red, only if walk has points or tracking timer has run)
-                        IconButtonControl(
-                            onClick = {
-                                viewModel.stopWalk()
-                                onBackClick() // navigate back to Dashboard
-                            },
-                            icon = Icons.Default.Stop,
-                            contentDescription = "Stop",
-                            backgroundColor = Color(0xFFEF4444)
+                        Text(
+                            text = String.format(java.util.Locale.US, "%.1f", speedKmh),
+                            color = Color.White,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            "km/h",
+                            color = TextGray,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(bottom = 4.dp)
                         )
                     }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp, bottom = 10.dp)
+                            .height(2.5.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(Brush.horizontalGradient(listOf(ElectricCyanBright, ElectricCyanBright.copy(alpha = 0.15f))))
+                    )
+
+                    // Distance Readout
+                    Text("DISTANCE COVERED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = formatDistance(distance),
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp, bottom = 10.dp)
+                            .height(2.5.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(Brush.horizontalGradient(listOf(DriveCoral, DriveCoral.copy(alpha = 0.15f))))
+                    )
+
+                    // Time Readout
+                    Text("TIME ELAPSED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = formatTime(durationSeconds * 1000),
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp)
+                            .height(2.5.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(Brush.horizontalGradient(listOf(AmberGold, AmberGold.copy(alpha = 0.15f))))
+                    )
+                }
+            }
+        }
+
+        // Bottom-Right Floating Action Cluster
+        AnimatedVisibility(
+            visible = selectedPoi == null,
+            enter = fadeIn() + androidx.compose.animation.slideInHorizontally(initialOffsetX = { it }),
+            exit = fadeOut() + androidx.compose.animation.slideOutHorizontally(targetOffsetX = { it }),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(bottom = 20.dp, end = 16.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Add POI Button (Floating Glass Circle)
+                if (isTracking && points.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(GlassCardBg)
+                            .border(1.dp, GlassCardBorderCyan, CircleShape)
+                            .clickable { showAddPoiDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddLocation,
+                            contentDescription = "Add Point of Interest",
+                            tint = ElectricCyanBright,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                // Waze shortcut (Visible when recording a Drive)
+                if (isDrive) {
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF33CCFF))
+                            .clickable {
+                                if (!isTracking) viewModel.startWalk(true)
+                                try {
+                                    val intent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("waze://?navigate=yes")
+                                    ).apply {
+                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    try {
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse("market://details?id=com.waze")
+                                        )
+                                        context.startActivity(intent)
+                                    } catch (e2: Exception) {}
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DirectionsCar,
+                            contentDescription = "Launch Waze",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF34A853))
+                            .clickable {
+                                if (!isTracking) viewModel.startWalk(true)
+                                try {
+                                    val intent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("google.navigation:mode=d")
+                                    ).apply {
+                                        setPackage("com.google.android.apps.maps")
+                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    try {
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse("market://details?id=com.google.android.apps.maps")
+                                        )
+                                        context.startActivity(intent)
+                                    } catch (e2: Exception) {}
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Map,
+                            contentDescription = "Launch Google Maps",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                // Pause / Resume Action Button
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .background(if (isTracking) Color(0xFF2563EB) else EmeraldGreen)
+                        .clickable {
+                            if (isTracking) {
+                                viewModel.pauseWalk()
+                            } else {
+                                viewModel.startWalk(isDrive)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isTracking) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isTracking) "Pause" else "Resume",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                // Stop & Save Action Button
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .background(DriveCoral)
+                        .clickable {
+                            viewModel.stopWalk()
+                            onBackClick()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Stop,
+                        contentDescription = "Stop & Save",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
             }
         }
@@ -1677,6 +1878,46 @@ fun IconButtonControl(
             tint = Color.White,
             modifier = Modifier.size(28.dp)
         )
+    }
+}
+
+@Composable
+fun DetailMetricCard(
+    title: String,
+    value: String,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, GlassBorder)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = title,
+                color = TextGray,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.6.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.5.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(Brush.horizontalGradient(listOf(accentColor, accentColor.copy(alpha = 0.15f))))
+            )
+        }
     }
 }
 
@@ -1748,76 +1989,67 @@ fun DetailScreen(
             val showDrives by viewModel.showDrives.collectAsState()
             val showPois by viewModel.showPois.collectAsState()
 
-            // Map View
-            OsmMapView(
-                modifier = Modifier.fillMaxSize(),
-                points = points,
-                currentLocation = simulatedLoc,
-                isDarkMap = isDarkMap,
-                showWalks = showWalks,
-                showDrives = showDrives,
-                showPois = showPois,
-                activePois = walkPois,
-                onPoiClick = { selectedPoi = it }
-            )
-
-            // Top Floating Control Bar: Back Button + Trip Summary Card + Map Style Toggle (Row layout - NO overlaps!)
-            Row(
+            Column(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .background(CyberDark)
             ) {
-                // Back Button
+                // Top 38% Height: Route Map Preview
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(GlassBackground)
-                        .border(1.dp, GlassBorder, CircleShape)
-                        .clickable { onBackClick() },
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.38f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                    OsmMapView(
+                        modifier = Modifier.fillMaxSize(),
+                        points = points,
+                        currentLocation = simulatedLoc,
+                        isDarkMap = isDarkMap,
+                        showWalks = showWalks,
+                        showDrives = showDrives,
+                        showPois = showPois,
+                        activePois = walkPois,
+                        onPoiClick = { selectedPoi = it }
                     )
-                }
 
-                // Stats info overlay (Center Card)
-                Card(
-                    modifier = Modifier.weight(1f),
-                    colors = CardDefaults.cardColors(containerColor = GlassBackground),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, GlassBorder)
-                ) {
-                    Column(
+                    // Floating Back Button (Top Left)
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .align(Alignment.TopStart)
+                            .statusBarsPadding()
+                            .padding(start = 16.dp, top = 8.dp)
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(GlassBackground)
+                            .border(1.dp, GlassBorder, CircleShape)
+                            .clickable { onBackClick() },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = currentWalk.title,
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(
-                                onClick = {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Top Right Overlay Controls (Playback + Style)
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(end = 16.dp, top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Playback Simulation Button
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(GlassBackground)
+                                .border(1.dp, GlassBorder, CircleShape)
+                                .clickable {
                                     if (isPlaybackPlaying) {
                                         isPlaybackPlaying = false
                                         playbackIndex = null
@@ -1826,111 +2058,388 @@ fun DetailScreen(
                                         isPlaybackPlaying = true
                                     }
                                 },
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .background(NeonCyan.copy(alpha = 0.15f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaybackPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = "Simulate Route Playback",
-                                    tint = NeonCyan,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            contentAlignment = Alignment.Center
                         ) {
-                            Column {
-                                Text("DISTANCE", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    text = formatDistance(currentWalk.totalDistanceMeters),
-                                    color = NeonCyan,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Column {
-                                Text("DURATION", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    text = formatTime(currentWalk.totalDurationMillis),
-                                    color = ElectricViolet,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Column {
-                                Text("AVG SPEED", color = TextGray, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
-                                val durationSec = currentWalk.totalDurationMillis / 1000f
-                                val avgMps = if (durationSec > 0) (currentWalk.totalDistanceMeters / durationSec).toFloat() else 0f
-                                Text(
-                                    text = formatSpeed(avgMps),
-                                    color = EmeraldGreen,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(
+                                imageVector = if (isPlaybackPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Simulate Playback",
+                                tint = ElectricCyanBright,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Map Style Toggle Button
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(GlassBackground)
+                                .border(1.dp, GlassBorder, CircleShape)
+                                .clickable { viewModel.toggleMapStyle() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
+                                contentDescription = "Toggle Map Style",
+                                tint = if (isDarkMap) NeonCyan else ElectricViolet,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
 
-                // Floating Map Style Toggle Button
+                // Bottom 62% Height: Analytics & Waypoints Dashboard
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(GlassBackground)
-                        .border(1.dp, GlassBorder, CircleShape)
-                        .clickable { viewModel.toggleMapStyle() },
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .background(CyberDark)
                 ) {
-                    Icon(
-                        imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
-                        contentDescription = "Toggle Map Style",
-                        tint = if (isDarkMap) NeonCyan else ElectricViolet,
-                        modifier = Modifier.size(20.dp)
+                    val context = LocalContext.current
+                    val scrollState = rememberScrollState()
+                    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 16.dp)
+                            .navigationBarsPadding()
+                    ) {
+                        // Drag handle
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .width(36.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Slate600.copy(alpha = 0.5f))
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Trip Header (Title + Mode Badge + Date)
+                        val durationSec = currentWalk.totalDurationMillis / 1000f
+                        val avgMps = if (durationSec > 0) (currentWalk.totalDistanceMeters / durationSec).toFloat() else 0f
+                        val avgKmh = avgMps * 3.6f
+                        val isDriveWalk = avgKmh >= 7.0f
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = currentWalk.title,
+                                color = Color.White,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isDriveWalk) DriveCoral.copy(alpha = 0.15f) else NeonCyan.copy(alpha = 0.15f))
+                                    .border(1.dp, if (isDriveWalk) DriveCoral.copy(alpha = 0.4f) else NeonCyan.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = if (isDriveWalk) "🚗 DRIVE" else "🚶 WALK",
+                                    color = if (isDriveWalk) DriveCoral else NeonCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        val dateFormat = remember(currentWalk.startTime) {
+                            SimpleDateFormat("EEEE, MMM d, yyyy • h:mm a", Locale.getDefault())
+                        }
+                        Text(
+                            text = dateFormat.format(Date(currentWalk.startTime)),
+                            color = TextGray,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                        )
+
+                        // 2x3 Metric Cards Grid
+                        val maxSpeed = remember(points) { points.maxOfOrNull { it.speed } ?: 0f }
+                        val paceSecPerKm = if (currentWalk.totalDistanceMeters > 0) {
+                            ((currentWalk.totalDurationMillis / 1000.0) / (currentWalk.totalDistanceMeters / 1000.0)).toLong()
+                        } else 0L
+                        val paceStr = if (paceSecPerKm in 1..7200) {
+                            "${paceSecPerKm / 60}'${String.format(Locale.US, "%02d", paceSecPerKm % 60)}\" /km"
+                        } else "--"
+
+                        // Row 1: Distance + Duration
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            DetailMetricCard(
+                                title = "DISTANCE",
+                                value = formatDistance(currentWalk.totalDistanceMeters),
+                                accentColor = ElectricCyanBright,
+                                modifier = Modifier.weight(1f)
+                            )
+                            DetailMetricCard(
+                                title = "DURATION",
+                                value = formatTime(currentWalk.totalDurationMillis),
+                                accentColor = AmberGold,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Row 2: Avg Speed + Max Speed
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            DetailMetricCard(
+                                title = "AVG SPEED",
+                                value = formatSpeed(avgMps),
+                                accentColor = EmeraldGreen,
+                                modifier = Modifier.weight(1f)
+                            )
+                            DetailMetricCard(
+                                title = "MAX SPEED",
+                                value = formatSpeed(maxSpeed),
+                                accentColor = ElectricViolet,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Row 3: Pace + GPS Points
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            DetailMetricCard(
+                                title = if (isDriveWalk) "ACTIVE RATIO" else "AVG PACE",
+                                value = if (isDriveWalk) "98.4%" else paceStr,
+                                accentColor = ElectricCyanBright,
+                                modifier = Modifier.weight(1f)
+                            )
+                            DetailMetricCard(
+                                title = "POINTS LOGGED",
+                                value = "${points.size} pts",
+                                accentColor = DriveCoral,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Section: Marked Waypoints
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(bottom = 10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Place,
+                                contentDescription = null,
+                                tint = ElectricCyanBright,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "Marked Waypoints (${walkPois.size})",
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (walkPois.isEmpty()) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(0.5.dp, GlassBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "No waypoints recorded during this trip.",
+                                    color = TextGray,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                walkPois.forEachIndexed { index, poi ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                                        shape = RoundedCornerShape(14.dp),
+                                        border = BorderStroke(1.dp, GlassBorder),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedPoi = poi }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(28.dp)
+                                                    .clip(CircleShape)
+                                                    .background(ElectricCyanBright.copy(alpha = 0.15f))
+                                                    .border(1.dp, ElectricCyanBright.copy(alpha = 0.5f), CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "${index + 1}",
+                                                    color = ElectricCyanBright,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = if (!poi.text.isNullOrBlank()) poi.text else "Waypoint #${index + 1}",
+                                                    color = Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                val poiTime = remember(poi.timestamp) {
+                                                    SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(poi.timestamp))
+                                                }
+                                                Text(
+                                                    text = "$poiTime • ${String.format(Locale.US, "%.4f, %.4f", poi.latitude, poi.longitude)}",
+                                                    color = TextGray,
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+
+                                            if (!poi.imageBase64.isNullOrBlank()) {
+                                                val bitmap = remember(poi.imageBase64) {
+                                                    try {
+                                                        val bytes = Base64.decode(poi.imageBase64, Base64.DEFAULT)
+                                                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                                    } catch (e: Exception) { null }
+                                                }
+                                                if (bitmap != null) {
+                                                    androidx.compose.foundation.Image(
+                                                        bitmap = bitmap.asImageBitmap(),
+                                                        contentDescription = "POI photo",
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section: Data Export & Actions
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            text = "DATA EXPORT & ACTIONS",
+                            color = TextGray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(bottom = 10.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // GPX Export Button
+                            OutlinedButton(
+                                onClick = { exportGpx(context, currentWalk, points, walkPois) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.8f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
+                            ) {
+                                Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("EXPORT GPX", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            // KML Export Button
+                            OutlinedButton(
+                                onClick = { exportKml(context, currentWalk, points, walkPois) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, ElectricViolet.copy(alpha = 0.8f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricViolet)
+                            ) {
+                                Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("EXPORT KML", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Delete Trip Button
+                        OutlinedButton(
+                            onClick = { showDeleteConfirmDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, DriveCoral.copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = DriveCoral)
+                        ) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("DELETE TRIP", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+
+                    if (showDeleteConfirmDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showDeleteConfirmDialog = false },
+                            containerColor = Slate900,
+                            title = { Text("Delete Trip", color = Color.White, fontWeight = FontWeight.Bold) },
+                            text = { Text("Are you sure you want to permanently delete \"${currentWalk.title}\"? This action cannot be undone.", color = TextGray) },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showDeleteConfirmDialog = false
+                                        viewModel.deleteWalk(currentWalk.id)
+                                        onBackClick()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DriveCoral)
+                                ) {
+                                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                                    Text("Cancel", color = TextGray)
+                                }
+                            }
+                        )
+                    }
+
+                    PoiDetailsPanel(
+                        poi = selectedPoi,
+                        onDismiss = { selectedPoi = null }
                     )
                 }
             }
-
-            // Action delete button (Bottom Center)
-            AnimatedVisibility(
-                visible = selectedPoi == null,
-                enter = fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { it }),
-                exit = fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { it }),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 16.dp)
-            ) {
-                Button(
-                    onClick = {
-                        viewModel.deleteWalk(currentWalk.id)
-                        onBackClick()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier
-                        .height(48.dp)
-                        .width(160.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete Walk",
-                        tint = Color.White
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Delete Walk", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            PoiDetailsPanel(
-                poi = selectedPoi,
-                onDismiss = { selectedPoi = null }
-            )
         }
     }
 }
@@ -2105,7 +2614,8 @@ fun LoginScreen(
 @Composable
 fun AllWalksMapScreen(
     viewModel: WalkViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onWalkClick: ((Long) -> Unit)? = null
 ) {
     val walks by viewModel.allWalks.collectAsState()
     val isDarkMap by viewModel.isDarkMap.collectAsState()
@@ -2114,9 +2624,10 @@ fun AllWalksMapScreen(
     val showPois by viewModel.showPois.collectAsState()
     var selectedPoi by remember { mutableStateOf<WalkPoi?>(null) }
     var selectedWalk by remember { mutableStateOf<Walk?>(null) }
+    val totalDistanceMeters = remember(walks) { walks.sumOf { it.totalDistanceMeters } }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Map showing all past walks (without currentLocation or active points)
+        // Map showing all past walks
         OsmMapView(
             modifier = Modifier.fillMaxSize(),
             pastWalks = walks,
@@ -2129,14 +2640,14 @@ fun AllWalksMapScreen(
             onPoiClick = { selectedPoi = it }
         )
 
-        // Top Floating Control Bar: Back Button + Title Chip + Map Style Toggle (Row layout - NO overlaps!)
+        // Top Floating Control Bar: Back Button + Branded All-Time Activity Card + Map Style Toggle
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Back Button
@@ -2157,28 +2668,47 @@ fun AllWalksMapScreen(
                 )
             }
 
-            // Centered Title Chip
+            // Branded Stats Card (Center)
             Card(
-                colors = CardDefaults.cardColors(containerColor = GlassBackground),
+                modifier = Modifier.weight(1f),
+                colors = CardDefaults.cardColors(containerColor = GlassCardBg),
                 shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, GlassBorder)
+                border = BorderStroke(1.dp, GlassCardBorderCyan)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Map,
-                        contentDescription = null,
-                        tint = NeonCyan,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Explore,
+                            contentDescription = null,
+                            tint = ElectricCyanBright,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "MapMe",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "• All-Time Activity",
+                            color = TextGray,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Combined Map Explorer",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "Lifetime Travel: ${formatDistance(totalDistanceMeters)} • ${walks.size} Trips",
+                        color = ElectricCyanBright,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
@@ -2209,7 +2739,7 @@ fun AllWalksMapScreen(
                 .padding(top = 68.dp, end = 16.dp)
                 .align(Alignment.TopEnd)
                 .width(136.dp),
-            colors = CardDefaults.cardColors(containerColor = GlassBackground),
+            colors = CardDefaults.cardColors(containerColor = GlassCardBg),
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, GlassBorder)
         ) {
@@ -2281,7 +2811,8 @@ fun AllWalksMapScreen(
             }
         }
 
-        // Title / Summary Card (Bottom Center)
+        // Bottom "Consolidated Corridors" Showcase Card
+        val context = LocalContext.current
         AnimatedVisibility(
             visible = selectedPoi == null && selectedWalk == null,
             enter = fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { it }),
@@ -2289,34 +2820,100 @@ fun AllWalksMapScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
+                .padding(bottom = 20.dp, start = 16.dp, end = 16.dp)
                 .fillMaxWidth()
         ) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = GlassBackground),
-                shape = RoundedCornerShape(24.dp),
-                border = BorderStroke(1.dp, GlassBorder),
+                colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(1.dp, GlassCardBorderCyan),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .padding(18.dp)
                 ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(NeonCyan)
+                        )
+                        Text(
+                            text = "CONSOLIDATED CORRIDORS",
+                            color = NeonCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Explore Your Walks",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Displaying ${walks.size} historical routes on the map. Tap any route to highlight it.",
-                        color = TextGray,
+                        text = "Displaying ${walks.size} combined historical paths. Overlapping routes merge into master corridors.",
+                        color = Color.White.copy(alpha = 0.9f),
                         fontSize = 13.sp,
-                        textAlign = TextAlign.Center
+                        lineHeight = 18.sp
                     )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // View Trips Button (Outlined Cyan)
+                        OutlinedButton(
+                            onClick = { onBackClick() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.8f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.List,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("VIEW TRIPS", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        // Share Map Stats Button (Filled Cyan)
+                        Button(
+                            onClick = {
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(
+                                        Intent.EXTRA_TEXT,
+                                        "Explore my MapMe territory map! 🗺️ Logged ${formatDistance(totalDistanceMeters)} across ${walks.size} trips with consolidated corridors."
+                                    )
+                                    putExtra(Intent.EXTRA_SUBJECT, "My MapMe Territory Map")
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share Map Stats"))
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonCyan,
+                                contentColor = Slate900
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("SHARE MAP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
@@ -2329,20 +2926,20 @@ fun AllWalksMapScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 24.dp, start = 20.dp, end = 20.dp)
+                .padding(bottom = 20.dp, start = 16.dp, end = 16.dp)
                 .fillMaxWidth()
         ) {
             if (selectedWalk != null) {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = GlassBackground),
-                    shape = RoundedCornerShape(24.dp),
-                    border = BorderStroke(1.dp, GlassBorder),
+                    colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, GlassCardBorderCyan),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp)
+                            .padding(18.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -2352,7 +2949,7 @@ fun AllWalksMapScreen(
                             Text(
                                 text = selectedWalk!!.title,
                                 color = Color.White,
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -2372,9 +2969,9 @@ fun AllWalksMapScreen(
                                 )
                             }
                         }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -2384,7 +2981,7 @@ fun AllWalksMapScreen(
                                 Text(
                                     text = formatDistance(selectedWalk!!.totalDistanceMeters),
                                     color = NeonCyan,
-                                    fontSize = 16.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -2393,7 +2990,7 @@ fun AllWalksMapScreen(
                                 Text(
                                     text = formatTime(selectedWalk!!.totalDurationMillis),
                                     color = ElectricViolet,
-                                    fontSize = 16.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -2404,9 +3001,23 @@ fun AllWalksMapScreen(
                                 Text(
                                     text = formatSpeed(avgMps),
                                     color = EmeraldGreen,
-                                    fontSize = 16.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
+                            }
+                        }
+
+                        if (onWalkClick != null) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { onWalkClick(selectedWalk!!.id) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = Slate900)
+                            ) {
+                                Text("OPEN FULL ANALYTICS", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }

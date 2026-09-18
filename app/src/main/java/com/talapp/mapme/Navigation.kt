@@ -59,7 +59,8 @@ fun MainNavigation(
           entry<AllWalksMap> {
             AllWalksMapScreen(
               viewModel = walkViewModel,
-              onBackClick = { backStack.removeLastOrNull() }
+              onBackClick = { backStack.removeLastOrNull() },
+              onWalkClick = { walkId -> backStack.add(Detail(walkId)) }
             )
           }
         },
