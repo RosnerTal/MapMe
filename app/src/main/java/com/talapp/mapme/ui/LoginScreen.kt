@@ -178,6 +178,40 @@ fun LoginScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
+
+                Spacer(modifier = Modifier.height(22.dp))
+
+                val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Privacy Policy",
+                        color = NeonCyan.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable {
+                            uriHandler.openUri("https://raw.githack.com/RosnerTal/notes/main/MapMe/privacy-policy.html")
+                        }
+                    )
+                    Text(
+                        text = " • ",
+                        color = TextGray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 6.dp)
+                    )
+                    Text(
+                        text = "Data Deletion",
+                        color = NeonCyan.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable {
+                            uriHandler.openUri("https://raw.githack.com/RosnerTal/notes/main/MapMe/data-deletion.html")
+                        }
+                    )
+                }
             }
         }
     }
