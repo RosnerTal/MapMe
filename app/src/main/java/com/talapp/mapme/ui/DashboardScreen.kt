@@ -103,7 +103,7 @@ fun DashboardScreen(
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             androidx.compose.foundation.Image(
-                                painter = androidx.compose.ui.res.painterResource(id = com.talapp.mapme.R.mipmap.ic_launcher),
+                                painter = androidx.compose.ui.res.painterResource(id = com.talapp.mapme.R.drawable.ic_mapme_logo),
                                 contentDescription = "MapMe Icon",
                                 modifier = Modifier
                                     .size(34.dp)

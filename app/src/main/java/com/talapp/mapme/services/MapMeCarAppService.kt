@@ -160,8 +160,9 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
     private fun bindLocationService() {
         if (!isBound) {
             try {
-                val intent = Intent(carContext, LocationService::class.java)
-                carContext.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+                val ctx = carContext.applicationContext ?: carContext
+                val intent = Intent(ctx, LocationService::class.java)
+                ctx.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
                 isBound = true
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -180,7 +181,8 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
         if (isBound) {
             try {
-                carContext.unbindService(serviceConnection)
+                val ctx = carContext.applicationContext ?: carContext
+                ctx.unbindService(serviceConnection)
             } catch (_: Exception) {}
             isBound = false
         }
@@ -221,15 +223,16 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
             return
         }
 
-        val intent = Intent(carContext, LocationService::class.java).apply {
+        val ctx = carContext.applicationContext ?: carContext
+        val intent = Intent(ctx, LocationService::class.java).apply {
             action = LocationService.ACTION_START
             putExtra("EXTRA_IS_DRIVE", isDrive)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                carContext.startForegroundService(intent)
+                ctx.startForegroundService(intent)
             } else {
-                carContext.startService(intent)
+                ctx.startService(intent)
             }
             bindLocationService()
         } catch (e: Exception) {
@@ -240,10 +243,11 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
     fun pauseTracking() {
         try {
-            val intent = Intent(carContext, LocationService::class.java).apply {
+            val ctx = carContext.applicationContext ?: carContext
+            val intent = Intent(ctx, LocationService::class.java).apply {
                 action = LocationService.ACTION_PAUSE
             }
-            carContext.startService(intent)
+            ctx.startService(intent)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -251,10 +255,11 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
     fun stopTracking() {
         try {
-            val intent = Intent(carContext, LocationService::class.java).apply {
+            val ctx = carContext.applicationContext ?: carContext
+            val intent = Intent(ctx, LocationService::class.java).apply {
                 action = LocationService.ACTION_STOP
             }
-            carContext.startService(intent)
+            ctx.startService(intent)
         } catch (e: Exception) {
             e.printStackTrace()
         }

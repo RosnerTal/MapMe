@@ -22,5 +22,15 @@ class MapMeApplication : Application() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+
+        try {
+            org.osmdroid.config.Configuration.getInstance().load(
+                this,
+                getSharedPreferences("osmdroid", MODE_PRIVATE)
+            )
+            org.osmdroid.config.Configuration.getInstance().userAgentValue = packageName
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

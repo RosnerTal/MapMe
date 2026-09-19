@@ -61,7 +61,7 @@ fun LoginScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(id = com.talapp.mapme.R.mipmap.ic_launcher),
+                    painter = androidx.compose.ui.res.painterResource(id = com.talapp.mapme.R.drawable.ic_mapme_logo),
                     contentDescription = "MapMe Logo",
                     modifier = Modifier
                         .size(72.dp)

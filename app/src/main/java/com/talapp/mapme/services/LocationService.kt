@@ -160,12 +160,18 @@ class LocationService : Service() {
             }
         }
 
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).apply {
+        val priority = if (hasFine) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        val locationRequest = LocationRequest.Builder(priority, 2000L).apply {
             setMinUpdateIntervalMillis(1000L)
             setMinUpdateDistanceMeters(0.5f) // Record points reliably
         }.build()
 
         try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null && _isTracking.value && _currentPoints.value.isEmpty()) {
+                    processLocationUpdate(loc)
+                }
+            }
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback!!, android.os.Looper.getMainLooper())
         } catch (unlikely: SecurityException) {
             _isTracking.value = false
