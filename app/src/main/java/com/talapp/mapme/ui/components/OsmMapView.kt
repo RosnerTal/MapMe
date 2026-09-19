@@ -36,6 +36,8 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
+import com.talapp.mapme.services.NavMode
+import com.talapp.mapme.services.NavRoute
 
 /**
  * Reusable OpenStreetMap MapView composable for MapMe.
@@ -56,7 +58,8 @@ fun OsmMapView(
     showPois: Boolean = true,
     activePois: List<WalkPoi> = emptyList(),
     onPoiClick: ((WalkPoi) -> Unit)? = null,
-    isDriveRecording: Boolean = false
+    isDriveRecording: Boolean = false,
+    activeNavRoute: NavRoute? = null
 ) {
     val context = LocalContext.current
     val gson = remember { Gson() }
@@ -144,7 +147,7 @@ fun OsmMapView(
     }
 
     // Redraw paths and markers when data changes
-    LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives, showPois, isDriveRecording) {
+    LaunchedEffect(points, currentLocation, pastWalks, showPastWalksRadiusMeters, selectedWalkId, activePois, showWalks, showDrives, showPois, isDriveRecording, activeNavRoute) {
         mapView.overlays.clear()
 
         // 1. Parse past walks into (Walk, List<WalkPoint>, Boolean (isDrive))
@@ -380,6 +383,52 @@ fun OsmMapView(
                 }
                 mapView.overlays.add(marker)
             }
+        }
+
+        // 2.8 Draw planned turn-by-turn navigation route (activeNavRoute)
+        if (activeNavRoute != null && activeNavRoute.waypoints.isNotEmpty()) {
+            val isWalk = (activeNavRoute.mode == NavMode.WALKING)
+            val navGeoPoints = activeNavRoute.waypoints.map { GeoPoint(it.first, it.second) }
+            allPointsForCentering.addAll(navGeoPoints)
+
+            val navGlowColor = if (isWalk) "#4410B981" else "#4400E5FF"
+            val navCoreColor = if (isWalk) "#FF10B981" else "#FF00E5FF"
+
+            // Outer glowing navigation polyline
+            val navGlow = Polyline().apply {
+                outlinePaint.color = android.graphics.Color.parseColor(navGlowColor)
+                outlinePaint.strokeWidth = 26f
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                setPoints(navGeoPoints)
+            }
+            mapView.overlays.add(navGlow)
+
+            // Sharp core navigation polyline
+            val navCore = Polyline().apply {
+                outlinePaint.color = android.graphics.Color.parseColor(navCoreColor)
+                outlinePaint.strokeWidth = 12f
+                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                setPoints(navGeoPoints)
+            }
+            mapView.overlays.add(navCore)
+
+            // Destination Pin Marker
+            val destGeoPoint = GeoPoint(activeNavRoute.destinationLat, activeNavRoute.destinationLon)
+            val destMarker = Marker(mapView).apply {
+                position = destGeoPoint
+                val pinDrawable = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_myplaces)?.mutate()?.apply {
+                    androidx.core.graphics.drawable.DrawableCompat.setTint(
+                        this,
+                        android.graphics.Color.parseColor(if (isWalk) "#10B981" else "#00E5FF")
+                    )
+                }
+                icon = pinDrawable
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                title = "Destination: ${activeNavRoute.destinationTitle}"
+            }
+            mapView.overlays.add(destMarker)
         }
 
         // 3. Dynamic camera centering and zooming

@@ -27,7 +27,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.talapp.mapme.data.Walk
+import com.talapp.mapme.services.NavMode
+import com.talapp.mapme.services.NavigationEngine
 import com.talapp.mapme.theme.*
+import com.talapp.mapme.ui.components.DestinationSearchSheet
 import com.talapp.mapme.ui.components.StatCard
 import com.talapp.mapme.ui.components.WalkHistoryItem
 import com.talapp.mapme.ui.components.WeeklyActivityChart
@@ -52,6 +55,7 @@ fun DashboardScreen(
     val lastSyncedTime by viewModel.lastSyncedTime.collectAsState()
 
     var showSyncPanel by remember { mutableStateOf(false) }
+    var showSearchSheet by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -149,6 +153,68 @@ fun DashboardScreen(
                             imageVector = Icons.Default.Person,
                             contentDescription = "Profile",
                             tint = if (showSyncPanel) ElectricViolet else NeonCyan
+                        )
+                    }
+                }
+            }
+
+            // Quick Search & Navigate Bar
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { showSearchSheet = true },
+                    colors = CardDefaults.cardColors(containerColor = Slate800.copy(alpha = 0.85f)),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        Brush.linearGradient(listOf(NeonCyan.copy(alpha = 0.5f), ElectricViolet.copy(alpha = 0.4f)))
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(NeonCyan.copy(alpha = 0.25f), ElectricViolet.copy(alpha = 0.25f))
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search",
+                                tint = NeonCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Where to? Search place & navigate",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Walking & Driving turn-by-turn guidance",
+                                color = TextGray,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = "Navigate",
+                            tint = EmeraldGreen,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -518,6 +584,17 @@ fun DashboardScreen(
                     )
                 }
             }
+        }
+
+        if (showSearchSheet) {
+            DestinationSearchSheet(
+                viewModel = viewModel,
+                onDismiss = { showSearchSheet = false },
+                onStartNavigation = {
+                    showSearchSheet = false
+                    onStartWalkClick(viewModel.navMode.value == NavMode.DRIVING)
+                }
+            )
         }
     }
 }

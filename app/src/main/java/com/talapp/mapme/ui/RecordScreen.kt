@@ -25,8 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import com.talapp.mapme.data.WalkPoi
+import com.talapp.mapme.services.NavMode
 import com.talapp.mapme.theme.*
 import com.talapp.mapme.ui.components.AddPoiDialog
+import com.talapp.mapme.ui.components.DestinationSearchSheet
+import com.talapp.mapme.ui.components.NavigationBottomBar
+import com.talapp.mapme.ui.components.NavigationTopBanner
 import com.talapp.mapme.ui.components.OsmMapView
 import com.talapp.mapme.ui.components.PoiDetailsPanel
 import com.talapp.mapme.util.formatDistance
@@ -47,6 +51,16 @@ fun RecordScreen(
     val isDarkMap by viewModel.isDarkMap.collectAsState()
     val showPois by viewModel.showPois.collectAsState()
 
+    // Navigation State
+    val activeNavRoute by viewModel.activeNavRoute.collectAsState()
+    val isNavigating by viewModel.isNavigating.collectAsState()
+    val currentStepIndex by viewModel.currentStepIndex.collectAsState()
+    val distanceToNextStepMeters by viewModel.distanceToNextStepMeters.collectAsState()
+    val remainingDistanceMeters by viewModel.remainingDistanceMeters.collectAsState()
+    val remainingDurationSeconds by viewModel.remainingDurationSeconds.collectAsState()
+    val isVoiceMuted by viewModel.isVoiceMuted.collectAsState()
+
+    var showSearchSheet by remember { mutableStateOf(false) }
     var showAddPoiDialog by remember { mutableStateOf(false) }
     var selectedPoi by remember { mutableStateOf<WalkPoi?>(null) }
     var showFilters by remember { mutableStateOf(false) }
@@ -63,7 +77,7 @@ fun RecordScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Map Background (shows past walks within 5km, and active points)
+        // Map Background (shows past walks within 5km, active points, and activeNavRoute)
         OsmMapView(
             modifier = Modifier.fillMaxSize(),
             points = points,
@@ -76,89 +90,101 @@ fun RecordScreen(
             showPois = showPois,
             activePois = activePois,
             onPoiClick = { selectedPoi = it },
-            isDriveRecording = isDrive
+            isDriveRecording = isDrive,
+            activeNavRoute = activeNavRoute
         )
 
-        // Top Floating Control Bar: Back Button + Status Badge + Map Style Toggle
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Floating Back Button
-            Box(
+        // Top Floating Area: Turn-by-Turn Navigation Banner OR Top Floating Bar with Search
+        if (isNavigating && activeNavRoute != null) {
+            NavigationTopBanner(
+                route = activeNavRoute!!,
+                currentStepIndex = currentStepIndex,
+                distanceToNextStepMeters = distanceToNextStepMeters,
+                isVoiceMuted = isVoiceMuted,
+                onToggleVoiceMute = { viewModel.toggleVoiceMute() },
+                onStopNavigation = { viewModel.stopInAppNavigation() },
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(GlassBackground)
-                    .border(1.dp, GlassBorder, CircleShape)
-                    .clickable { onBackClick() },
-                contentAlignment = Alignment.Center
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 8.dp)
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // Glassmorphic Status Badge (Pill)
-            Card(
-                colors = CardDefaults.cardColors(containerColor = GlassCardBg),
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, if (isDrive) GlassCardBorder else GlassCardBorderCyan)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Floating Back Button
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(GlassBackground)
+                        .border(1.dp, GlassBorder, CircleShape)
+                        .clickable { onBackClick() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    val statusDotColor = when {
-                        !isTracking -> AmberGold
-                        isDrive -> DriveCoral
-                        else -> NeonCyan
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(statusDotColor)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = when {
-                            !isTracking -> "PAUSED"
-                            isDrive -> "🚗 ACTIVE DRIVE"
-                            else -> "🚶 ACTIVE WALK"
-                        },
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.6.sp
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-            }
 
-            // Floating Map Style Toggle Button
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(GlassBackground)
-                    .border(1.dp, GlassBorder, CircleShape)
-                    .clickable { viewModel.toggleMapStyle() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
-                    contentDescription = "Toggle Map Style",
-                    tint = if (isDarkMap) NeonCyan else ElectricViolet,
-                    modifier = Modifier.size(20.dp)
-                )
+                // Floating Search Bar Pill
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = GlassCardBg),
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, if (isDrive) GlassCardBorder else GlassCardBorderCyan),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp)
+                        .clickable { showSearchSheet = true }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = if (isDrive) DriveCoral else NeonCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isDrive) "Search destination (Drive)..." else "Search destination (Walk)...",
+                            color = TextGray,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Floating Map Style Toggle Button
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(GlassBackground)
+                        .border(1.dp, GlassBorder, CircleShape)
+                        .clickable { viewModel.toggleMapStyle() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isDarkMap) Icons.Default.WbSunny else Icons.Default.NightsStay,
+                        contentDescription = "Toggle Map Style",
+                        tint = if (isDarkMap) NeonCyan else ElectricViolet,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 
@@ -524,6 +550,24 @@ fun RecordScreen(
                     )
                 }
 
+                // Search Destination Button (Floating Glass Circle)
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(GlassCardBg)
+                        .border(1.dp, if (isDrive) GlassCardBorder else GlassCardBorderCyan, CircleShape)
+                        .clickable { showSearchSheet = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search Destination",
+                        tint = if (isDrive) DriveCoral else NeonCyan,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
                 // Stop & Save Action Button
                 Box(
                     modifier = Modifier
@@ -544,6 +588,33 @@ fun RecordScreen(
                     )
                 }
             }
+        }
+
+        // Navigation Bottom Progress Card (when navigating)
+        if (isNavigating && activeNavRoute != null) {
+            NavigationBottomBar(
+                route = activeNavRoute!!,
+                remainingDistanceMeters = remainingDistanceMeters,
+                remainingDurationSeconds = remainingDurationSeconds,
+                onStopNavigation = { viewModel.stopInAppNavigation() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 190.dp)
+            )
+        }
+
+        // Destination Search & Route Preview Sheet
+        if (showSearchSheet) {
+            DestinationSearchSheet(
+                viewModel = viewModel,
+                initialMode = if (isDrive) NavMode.DRIVING else NavMode.WALKING,
+                onDismiss = { showSearchSheet = false },
+                onStartNavigation = { route ->
+                    viewModel.startInAppNavigation(route)
+                    showSearchSheet = false
+                }
+            )
         }
     }
 }

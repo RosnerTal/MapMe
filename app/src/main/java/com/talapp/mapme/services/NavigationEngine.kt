@@ -30,6 +30,11 @@ data class NavStep(
     val longitude: Double
 )
 
+enum class NavMode {
+    DRIVING,
+    WALKING
+}
+
 data class NavRoute(
     val destinationTitle: String,
     val destinationLat: Double,
@@ -37,7 +42,8 @@ data class NavRoute(
     val totalDistanceMeters: Double,
     val totalDurationSeconds: Double,
     val waypoints: List<Pair<Double, Double>>, // (lat, lon) path coordinates
-    val steps: List<NavStep>
+    val steps: List<NavStep>,
+    val mode: NavMode = NavMode.DRIVING
 )
 
 /**
@@ -48,7 +54,7 @@ data class NavRoute(
 object NavigationEngine {
 
     private const val TAG = "NavigationEngine"
-    private const val USER_AGENT = "MapMe-AndroidAuto/4.7 (talapp.com)"
+    private const val USER_AGENT = "MapMe-App/4.8 (talapp.com)"
 
     /**
      * Search destinations worldwide or locally using Photon Geocoding API.
@@ -135,25 +141,32 @@ object NavigationEngine {
      * Calculate optimal driving route from starting coordinate to destination coordinate using OSRM.
      * Returns full polyline points and turn-by-turn maneuvers mapped to Android Auto Maneuver types.
      */
+    /**
+     * Calculate optimal route from starting coordinate to destination coordinate using OSRM.
+     * Supports both DRIVING (OSRM /driving/) and WALKING (OSRM /foot/) routing engines.
+     * Returns full polyline points and turn-by-turn maneuvers.
+     */
     suspend fun calculateRoute(
         startLat: Double,
         startLon: Double,
         destLat: Double,
         destLon: Double,
-        destinationTitle: String
+        destinationTitle: String,
+        mode: NavMode = NavMode.DRIVING
     ): NavRoute? = withContext(Dispatchers.IO) {
         try {
+            val serviceMode = if (mode == NavMode.WALKING) "foot" else "driving"
             val urlStr = String.format(
                 Locale.US,
-                "https://router.project-osrm.org/route/v1/driving/%.6f,%.6f;%%20%.6f,%.6f?overview=full&geometries=geojson&steps=true",
-                startLon, startLat, destLon, destLat
+                "https://router.project-osrm.org/route/v1/%s/%.6f,%.6f;%%20%.6f,%.6f?overview=full&geometries=geojson&steps=true",
+                serviceMode, startLon, startLat, destLon, destLat
             ).replace("%20", "") // router accepts {lon1},{lat1};{lon2},{lat2}
 
             val conn = URL(
                 String.format(
                     Locale.US,
-                    "https://router.project-osrm.org/route/v1/driving/%.6f,%.6f;%.6f,%.6f?overview=full&geometries=geojson&steps=true",
-                    startLon, startLat, destLon, destLat
+                    "https://router.project-osrm.org/route/v1/%s/%.6f,%.6f;%.6f,%.6f?overview=full&geometries=geojson&steps=true",
+                    serviceMode, startLon, startLat, destLon, destLat
                 )
             ).openConnection() as HttpURLConnection
 
@@ -218,7 +231,7 @@ object NavigationEngine {
                         }
 
                         val maneuverCode = mapManeuver(manTypeStr, manModifierStr)
-                        val cueText = generateCue(manTypeStr, manModifierStr, roadName, destinationTitle, exitNumber)
+                        val cueText = generateCue(manTypeStr, manModifierStr, roadName, destinationTitle, exitNumber, mode)
                         val roadDisplay = if (roadName.isNotBlank()) roadName else destinationTitle
 
                         navSteps.add(
@@ -243,7 +256,8 @@ object NavigationEngine {
                 totalDistanceMeters = totalDistance,
                 totalDurationSeconds = totalDuration,
                 waypoints = waypoints,
-                steps = navSteps
+                steps = navSteps,
+                mode = mode
             )
         } catch (e: Exception) {
             Log.e(TAG, "Route calculation failed: ${e.message}", e)
@@ -251,7 +265,7 @@ object NavigationEngine {
         }
     }
 
-    private fun mapManeuver(type: String, modifier: String?): Int {
+    internal fun mapManeuver(type: String, modifier: String?): Int {
         val t = type.lowercase()
         val m = modifier?.lowercase() ?: ""
         return when {
@@ -292,20 +306,22 @@ object NavigationEngine {
         }
     }
 
-    private fun generateCue(
+    internal fun generateCue(
         type: String,
         modifier: String?,
         roadName: String,
         destinationTitle: String,
-        exitNumber: Int
+        exitNumber: Int,
+        mode: NavMode = NavMode.DRIVING
     ): String {
         val t = type.lowercase()
         val m = modifier?.lowercase()
         val target = if (roadName.isNotBlank()) roadName else destinationTitle
+        val actionVerb = if (mode == NavMode.WALKING) "Walk" else "Drive"
 
         return when {
             t == "arrive" -> "Arrive at $destinationTitle"
-            t == "depart" -> "Drive toward $target"
+            t == "depart" -> "$actionVerb toward $target"
             t == "roundabout" || t == "rotary" -> {
                 if (exitNumber > 0) "At roundabout, take exit $exitNumber onto $target"
                 else "Enter roundabout toward $target"
@@ -330,5 +346,65 @@ object NavigationEngine {
             }
             else -> "Continue onto $target"
         }
+    }
+
+    /**
+     * Calculates the shortest perpendicular distance in meters from point P to line segment AB.
+     */
+    fun pointToSegmentDistanceMeters(
+        latP: Double, lonP: Double,
+        latA: Double, lonA: Double,
+        latB: Double, lonB: Double
+    ): Double {
+        val r = 6371000.0 // meters
+        val toRad = Math.PI / 180.0
+
+        val latMid = (latA + latB) / 2.0
+        val xA = lonA * toRad * Math.cos(latMid * toRad) * r
+        val yA = latA * toRad * r
+        val xB = lonB * toRad * Math.cos(latMid * toRad) * r
+        val yB = latB * toRad * r
+        val xP = lonP * toRad * Math.cos(latMid * toRad) * r
+        val yP = latP * toRad * r
+
+        val dx = xB - xA
+        val dy = yB - yA
+        val segLenSq = dx * dx + dy * dy
+
+        if (segLenSq < 1e-6) {
+            return Math.hypot(xP - xA, yP - yA)
+        }
+
+        val t = Math.max(0.0, Math.min(1.0, ((xP - xA) * dx + (yP - yA) * dy) / segLenSq))
+        val projX = xA + t * dx
+        val projY = yA + t * dy
+        return Math.hypot(xP - projX, yP - projY)
+    }
+
+    /**
+     * Checks if current GPS coordinates have drifted beyond the threshold corridor of the planned route.
+     */
+    fun isOffRoute(
+        currentLat: Double,
+        currentLon: Double,
+        waypoints: List<Pair<Double, Double>>,
+        thresholdMeters: Double
+    ): Boolean {
+        if (waypoints.size < 2) return false
+        var minDistance = Double.MAX_VALUE
+        for (i in 0 until waypoints.size - 1) {
+            val p1 = waypoints[i]
+            val p2 = waypoints[i + 1]
+            val dist = pointToSegmentDistanceMeters(
+                currentLat, currentLon,
+                p1.first, p1.second,
+                p2.first, p2.second
+            )
+            if (dist < minDistance) {
+                minDistance = dist
+                if (minDistance <= thresholdMeters) return false
+            }
+        }
+        return minDistance > thresholdMeters
     }
 }
