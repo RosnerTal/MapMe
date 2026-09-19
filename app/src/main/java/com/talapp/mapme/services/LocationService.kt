@@ -99,8 +99,43 @@ class LocationService : Service() {
     private fun startTracking() {
         if (_isTracking.value) return
 
-        // Verify location permissions are granted before requesting updates
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        val isDrive = _isTrackingDrive.value
+        val title = if (isDrive) "MapMe: Recording Drive" else "MapMe: Recording Walk"
+
+        // 1. Build and display the initial notification IMMEDIATELY to satisfy the Foreground Service contract
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText("GPS initializing...")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .setContentIntent(getMainActivityPendingIntent())
+            .build()
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (ignored: Exception) {
+                ignored.printStackTrace()
+            }
+        }
+
+        // 2. Verify location permissions are granted before requesting updates
+        val hasFine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) {
+            _isTracking.value = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
             stopSelf()
             return
         }
@@ -113,25 +148,10 @@ class LocationService : Service() {
             startTimeMillis = System.currentTimeMillis() - (pausedTimeSeconds * 1000)
         }
 
-        // 1. Build and display the initial notification
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MapMe: Recording Walk")
-            .setContentText("GPS initializing...")
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setOngoing(true)
-            .setContentIntent(getMainActivityPendingIntent())
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-
-        // 2. Start the tracking timer
+        // 3. Start the tracking timer
         startTimer()
 
-        // 3. Register location updates callback
+        // 4. Register location updates callback
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
                 for (location in locationResult.locations) {
@@ -140,15 +160,21 @@ class LocationService : Service() {
             }
         }
 
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L).apply {
-            setMinUpdateIntervalMillis(1500L)
-            setMinUpdateDistanceMeters(1.0f) // Record points when moving 1+ meters
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L).apply {
+            setMinUpdateIntervalMillis(1000L)
+            setMinUpdateDistanceMeters(0.5f) // Record points reliably
         }.build()
 
         try {
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback!!, android.os.Looper.getMainLooper())
         } catch (unlikely: SecurityException) {
             _isTracking.value = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
             stopSelf()
         }
     }
@@ -204,8 +230,9 @@ class LocationService : Service() {
         }
         locationCallback = null
 
+        val pauseTitle = if (_isTrackingDrive.value) "MapMe: Recording Paused (Drive)" else "MapMe: Recording Paused (Walk)"
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MapMe: Recording Paused")
+            .setContentTitle(pauseTitle)
             .setContentText("Duration: ${formatDuration(_elapsedTimeSeconds.value)} | Distance: ${formatDistance(_totalDistanceMeters.value)}")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
@@ -283,8 +310,9 @@ class LocationService : Service() {
     private fun updateNotification() {
         val durationText = formatDuration(_elapsedTimeSeconds.value)
         val distanceText = formatDistance(_totalDistanceMeters.value)
+        val activeTitle = if (_isTrackingDrive.value) "MapMe: Recording Drive" else "MapMe: Recording Walk"
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MapMe: Recording Walk")
+            .setContentTitle(activeTitle)
             .setContentText("Duration: $durationText | Distance: $distanceText")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)

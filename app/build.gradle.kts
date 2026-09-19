@@ -12,8 +12,8 @@ android {
         applicationId = "com.talapp.mapme"
         minSdk = 24
         targetSdk = 36
-        versionCode = 48
-        versionName = "4.8"
+        versionCode = 49
+        versionName = "4.9"
     }
 
     signingConfigs {

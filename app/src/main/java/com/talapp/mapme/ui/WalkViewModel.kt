@@ -35,14 +35,14 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalCoroutinesApi::class)
 class WalkViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository: WalkRepository
+    private val repository: WalkRepository = WalkRepository(WalkDatabase.getDatabase(application).walkDao())
     private val _locationService = MutableStateFlow<LocationService?>(null)
     val locationService = _locationService.asStateFlow()
 
-    private val auth = FirebaseAuth.getInstance()
-    private val firestore = FirebaseFirestore.getInstance()
+    private val auth by lazy { FirebaseAuth.getInstance() }
+    private val firestore by lazy { FirebaseFirestore.getInstance() }
 
-    private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
+    private val _currentUser = MutableStateFlow<FirebaseUser?>(null)
     val currentUser = _currentUser.asStateFlow()
 
     private val _isDarkMap = MutableStateFlow(true)
@@ -126,6 +126,35 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         _showPois.value = !_showPois.value
     }
 
+    // Bound Service tracking states
+    val isTracking: Flow<Boolean> = _locationService.flatMapLatest { service ->
+        service?.isTracking ?: flowOf(false)
+    }
+
+    val isTrackingDrive: Flow<Boolean> = _locationService.flatMapLatest { service ->
+        service?.isTrackingDrive ?: flowOf(false)
+    }
+
+    val activePoints: Flow<List<WalkPoint>> = _locationService.flatMapLatest { service ->
+        service?.currentPoints ?: flowOf(emptyList())
+    }
+
+    val activePois: Flow<List<com.talapp.mapme.data.WalkPoi>> = _locationService.flatMapLatest { service ->
+        service?.activePois ?: flowOf(emptyList())
+    }
+
+    val activeDistanceMeters: Flow<Double> = _locationService.flatMapLatest { service ->
+        service?.totalDistanceMeters ?: flowOf(0.0)
+    }
+
+    val activeDurationSeconds: Flow<Long> = _locationService.flatMapLatest { service ->
+        service?.elapsedTimeSeconds ?: flowOf(0L)
+    }
+
+    fun addActivePoi(text: String?, imageBase64: String?) {
+        _locationService.value?.addPoi(text, imageBase64)
+    }
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as LocationService.LocalBinder
@@ -138,17 +167,23 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        val database = WalkDatabase.getDatabase(application)
-        repository = WalkRepository(database.walkDao())
+        // Safe Firebase Auth initialization
+        try {
+            _currentUser.value = auth.currentUser
+            auth.addAuthStateListener { firebaseAuth ->
+                _currentUser.value = firebaseAuth.currentUser
+                syncWalks()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         // Bind to tracking service
-        val intent = Intent(application, LocationService::class.java)
-        application.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-
-        // Listen to Auth State changes
-        auth.addAuthStateListener { firebaseAuth ->
-            _currentUser.value = firebaseAuth.currentUser
-            syncWalks()
+        try {
+            val intent = Intent(application, LocationService::class.java)
+            application.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
         // Automatically sync when database changes
@@ -222,41 +257,20 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         list.sumOf { it.totalDurationMillis }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
-    // Bound Service tracking states
-    val isTracking: Flow<Boolean> = _locationService.flatMapLatest { service ->
-        service?.isTracking ?: flowOf(false)
-    }
-
-    val activePoints: Flow<List<WalkPoint>> = _locationService.flatMapLatest { service ->
-        service?.currentPoints ?: flowOf(emptyList())
-    }
-
-    val activePois: Flow<List<com.talapp.mapme.data.WalkPoi>> = _locationService.flatMapLatest { service ->
-        service?.activePois ?: flowOf(emptyList())
-    }
-
-    fun addActivePoi(text: String?, imageBase64: String?) {
-        _locationService.value?.addPoi(text, imageBase64)
-    }
-
-    val activeDistanceMeters: Flow<Double> = _locationService.flatMapLatest { service ->
-        service?.totalDistanceMeters ?: flowOf(0.0)
-    }
-
-    val activeDurationSeconds: Flow<Long> = _locationService.flatMapLatest { service ->
-        service?.elapsedTimeSeconds ?: flowOf(0L)
-    }
-
     fun startWalk(isDrive: Boolean = false) {
         val context = getApplication<Application>().applicationContext
         val intent = Intent(context, LocationService::class.java).apply {
             action = LocationService.ACTION_START
             putExtra("EXTRA_IS_DRIVE", isDrive)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 

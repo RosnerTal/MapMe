@@ -1,13 +1,16 @@
 package com.talapp.mapme.services
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
@@ -91,6 +94,7 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             locationService = null
+            isBound = false
             observeJob?.cancel()
         }
     }
@@ -210,9 +214,16 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
      * Start Drive tracking (All in-car tracking is Drive mode).
      */
     fun startTracking(isDrive: Boolean = true) {
+        val hasFine = ContextCompat.checkSelfPermission(carContext, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(carContext, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) {
+            CarToast.makeText(carContext, "Please open MapMe on phone to grant Location permission", CarToast.LENGTH_LONG).show()
+            return
+        }
+
         val intent = Intent(carContext, LocationService::class.java).apply {
             action = LocationService.ACTION_START
-            putExtra("EXTRA_IS_DRIVE", true)
+            putExtra("EXTRA_IS_DRIVE", isDrive)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -223,6 +234,7 @@ class MapMeCarSession : Session(), DefaultLifecycleObserver {
             bindLocationService()
         } catch (e: Exception) {
             e.printStackTrace()
+            CarToast.makeText(carContext, "Failed to start recording: ${e.message}", CarToast.LENGTH_SHORT).show()
         }
     }
 
